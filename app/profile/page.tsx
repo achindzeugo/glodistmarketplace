@@ -39,8 +39,11 @@ import {
   Clock,
   AlertTriangle
 } from "lucide-react"
+import { Heart, Settings, ShieldCheck, MapPin, Download } from "lucide-react"
+import Link from "next/link"
 
 export default function ProfilePage() {
+  const [activeTab, setActiveTab] = useState<string>("profile")
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
@@ -253,10 +256,10 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-4">
           {/* Carte de profil principal */}
           <FadeTransition>
-            <Card className="md:col-span-2 hover:shadow-md transition-shadow duration-200">
+            <Card className="md:col-span-1 hover:shadow-md transition-shadow duration-200">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
@@ -393,7 +396,7 @@ export default function ProfilePage() {
           </FadeTransition>
 
           {/* Carte d'informations supplémentaires */}
-          <div className="space-y-6">
+          <div className="md:col-span-3 space-y-6">
             <FadeTransition className="animation-delay-200">
               <Card className="hover:shadow-md transition-shadow duration-200">
                 <CardHeader>

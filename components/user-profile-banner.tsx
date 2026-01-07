@@ -124,7 +124,8 @@ export function UserProfileBanner() {
           </div>
 
           <div className="flex items-center gap-2">
-            {user.role === 'Vendeur' && user.vente && (
+            {user.role === 'Vendeur' && (
+              //user.vente &&
               <Button
                 variant="outline"
                 size="sm"
@@ -155,7 +156,8 @@ export function UserProfileBanner() {
                   <UserIcon className="mr-2 h-4 w-4" />
                   Mon Profil
                 </DropdownMenuItem>
-                {user.role === 'Vendeur' && user.vente && (
+                {user.role === 'Vendeur' && (
+                  //user.vente &&
                   <DropdownMenuItem onClick={() => router.push('/dashboard')}>
                     <ShoppingBag className="mr-2 h-4 w-4" />
                     Ma Boutique

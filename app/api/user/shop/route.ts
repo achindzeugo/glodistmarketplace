@@ -16,7 +16,7 @@ export async function GET() {
     }
 
     // Appel à l'API pour récupérer les informations de la boutique de l'utilisateur
-    const response = await fetch(`${API_BASE_URL}/user/shop/`, {
+    const response = await fetch(`${API_BASE_URL}/auth/boutiques/`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

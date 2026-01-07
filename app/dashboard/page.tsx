@@ -17,9 +17,12 @@ import {
   Store,
   ArrowLeft,
   ImagePlus,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
@@ -29,12 +32,158 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { AuthManager } from "@/lib/auth"
+
+import { useToast } from "@/hooks/use-toast"
+
+// Définir les types
+type Boutique = {
+  id: number;
+  name: string;
+  nom: string;
+  description: string;
+  user_id: number;
+};
+
+type Category = {
+  id: number;
+  libelle: string;
+};
 
 export default function ShopDashboard() {
+  const router = useRouter()
+  const { toast } = useToast()
+  
+  // --- COMPONENT STATE ---
+  const [shop, setShop] = useState<Partial<Boutique>>({})
   const [activeTab, setActiveTab] = useState("overview")
   const [showAddProduct, setShowAddProduct] = useState(false)
+
+  // Add Product Form State
+  const [categories, setCategories] = useState<Category[]>([])
+  const [newProduct, setNewProduct] = useState({
+    nom: "",
+    description: "",
+    prix: "",
+    stock: "",
+    categorie: "",
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Mock data state (for existing UI parts)
   const [editingProduct, setEditingProduct] = useState<any>(null)
   const [selectedOrder, setSelectedOrder] = useState<any>(null)
+
+  useEffect(() => {
+    if (!AuthManager.isAuthenticated()) {
+      router.push("/login")
+      return
+    }
+
+    const fetchShopData = async () => {
+      try {
+        const res = await fetch("/api/user/shop", { credentials: "include" })
+        if (!res.ok) throw new Error("Boutique non trouvée.")
+        const data = await res.json()
+        if (data.shop && data.shop.results && data.shop.results.length > 0) {
+          setShop(data.shop.results[0])
+        } else {
+          router.push("/")
+        }
+      } catch (err) {
+        console.error(err)
+        router.push("/")
+      }
+    }
+
+    const fetchCategories = async () => {
+      try {
+        const res = await fetch("/api/products/categories")
+        if (!res.ok) {
+            throw new Error(`Impossible de charger les catégories (${res.statusText})`);
+        }
+        const data = await res.json()
+        setCategories(data.results || [])
+      } catch (error: any) {
+        console.error(error)
+        toast({
+          title: "Erreur Catégories",
+          description: error.message || "Impossible de charger les catégories de produits.",
+          variant: "destructive",
+        })
+      }
+    }
+
+    fetchShopData()
+    fetchCategories()
+  }, [router, toast])
+
+  // --- EVENT HANDLERS ---
+  const handleNewProductChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { id, value } = e.target
+    setNewProduct(prev => ({ ...prev, [id]: value }))
+  }
+
+  const handleProductSubmit = async () => {
+    if (!newProduct.nom || !newProduct.prix || !newProduct.stock || !newProduct.categorie) {
+      toast({
+        title: "Champs manquants",
+        description: "Veuillez remplir tous les champs obligatoires.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!shop?.id) {
+       toast({ title: "Erreur", description: "ID de la boutique introuvable.", variant: "destructive" })
+       return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const payload = {
+        nom: newProduct.nom,
+        description: newProduct.description,
+        prix: parseFloat(newProduct.prix),
+        stock: parseInt(newProduct.stock, 10),
+        categorie: parseInt(newProduct.categorie, 10),
+        boutique: shop.id,
+        statut_produit: "actif", // Statut par défaut
+      }
+
+      const response = await fetch('/api/products/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        // Tente de trouver un message d'erreur spécifique
+        const specificError = errorData.details?.nom?.[0] || errorData.error || 'Une erreur est survenue.'
+        throw new Error(specificError)
+      }
+
+      toast({
+        title: "Produit ajouté ! 🎉",
+        description: `'${newProduct.nom}' a été ajouté avec succès à votre boutique.`,
+      })
+
+      // Réinitialiser le formulaire et fermer le panneau
+      setNewProduct({ nom: "", description: "", prix: "", stock: "", categorie: "" })
+      setShowAddProduct(false)
+      // Idéalement, ici, on rafraîchirait la liste des produits
+      
+    } catch (error: any) {
+      toast({
+        title: "Erreur lors de l'ajout",
+        description: error.message,
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   // Données fictives selon MCD
   const orders = [
@@ -67,6 +216,7 @@ export default function ShopDashboard() {
     }
   }
 
+  // --- Affichage du tableau de bord
   return (
     <div className="flex min-h-screen bg-muted/20">
       {/* Sidebar - Desktop */}
@@ -82,7 +232,7 @@ export default function ShopDashboard() {
               <Store className="h-5 w-5 text-white" />
             </div>
             <div className="min-w-0">
-              <p className="font-black text-sm truncate uppercase tracking-tighter text-primary">Electro Cam</p>
+              <p className="font-black text-sm truncate uppercase tracking-tighter text-primary">{shop.name || shop.nom || ''}</p>
               <p className="text-[10px] text-muted-foreground font-bold">VENDEUR VÉRIFIÉ</p>
             </div>
           </div>
@@ -143,33 +293,34 @@ export default function ShopDashboard() {
               <CardContent className="p-6 space-y-6">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Nom du produit (Libelle)</Label>
-                    <Input id="name" placeholder="Ex: iPhone 16 Pro" />
+                    <Label htmlFor="nom">Nom du produit (Libelle)</Label>
+                    <Input id="nom" value={newProduct.nom} onChange={handleNewProductChange} placeholder="Ex: iPhone 16 Pro" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="category">Catégorie</Label>
+                    <Label htmlFor="categorie">Catégorie</Label>
                     <select
-                      id="category"
+                      id="categorie"
+                      value={newProduct.categorie}
+                      onChange={handleNewProductChange}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     >
-                      <option>Électronique</option>
-                      <option>Mode</option>
-                      <option>Maison</option>
+                      <option value="" disabled>Sélectionner une catégorie</option>
+                      {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.libelle}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="desc">Description</Label>
-                  <Textarea id="desc" placeholder="Détails du produit..." className="min-h-[100px]" />
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea id="description" value={newProduct.description} onChange={handleNewProductChange} placeholder="Détails du produit..." className="min-h-[100px]" />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Prix (XAF)</Label>
-                    <Input id="price" type="number" placeholder="0" />
+                    <Label htmlFor="prix">Prix (XAF)</Label>
+                    <Input id="prix" type="number" value={newProduct.prix} onChange={handleNewProductChange} placeholder="0" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="stock">Stock disponible</Label>
-                    <Input id="stock" type="number" placeholder="0" />
+                    <Input id="stock" type="number" value={newProduct.stock} onChange={handleNewProductChange} placeholder="0" />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -180,8 +331,8 @@ export default function ShopDashboard() {
                     <p className="text-xs text-muted-foreground mt-1">PNG, JPG jusqu'à 5Mo</p>
                   </div>
                 </div>
-                <Button className="w-full py-6 font-bold" onClick={() => setShowAddProduct(false)}>
-                  Enregistrer le produit
+                <Button className="w-full py-6 font-bold" onClick={handleProductSubmit} disabled={isSubmitting}>
+                  {isSubmitting ? "Enregistrement..." : "Enregistrer le produit"}
                 </Button>
               </CardContent>
             </Card>
@@ -191,12 +342,14 @@ export default function ShopDashboard() {
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <h1 className="text-3xl font-black tracking-tight text-primary">
-                  {activeTab === "overview" && "Tableau de bord"}
-                  {activeTab === "products" && "Gestion des Produits"}
-                  {activeTab === "orders" && "Commandes Clients"}
-                  {activeTab === "customers" && "Base Clients"}
+                  {shop.name || shop.nom || 'Ma Boutique'}
                 </h1>
-                <p className="text-muted-foreground">Gestion complète de Glodist - Electro Cam Sarl</p>
+                <p className="text-muted-foreground">
+                  {activeTab === "overview" && "Vue d'ensemble de votre activité"}
+                  {activeTab === "products" && "Gestion de vos produits"}
+                  {activeTab === "orders" && "Suivi de vos commandes client"}
+                  {activeTab === "customers" && "Historique de vos clients"}
+                </p>
               </div>
               <Button
                 className="gap-2 bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold px-6 shadow-lg shadow-secondary/20"

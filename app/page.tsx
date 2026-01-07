@@ -44,11 +44,16 @@ export default function Home() {
           // Récupérer les informations de la boutique de l'utilisateur
           const userShopData = await apiClient.getUserShop()
           
-          if (userShopData.shop) {
-            // Exclure les produits de la boutique du vendeur connecté
-            filteredProducts = products.filter(product => 
-              product.boutique !== userShopData.shop.id.toString()
-            )
+          if (userShopData.shop && userShopData.shop.results && userShopData.shop.results.length > 0) {
+            const userShopId = userShopData.shop.results[0].id;
+            if (userShopId) {
+              // Exclure les produits de la boutique du vendeur connecté
+              filteredProducts = products.filter(product => 
+                product.boutique !== userShopId.toString()
+              );
+            }
+          } else {
+            console.warn("La boutique de l'utilisateur a été récupérée mais la structure est inattendue (pas de 'results').", userShopData);
           }
         } catch (error) {
           console.warn('Impossible de récupérer la boutique de l\'utilisateur:', error)
