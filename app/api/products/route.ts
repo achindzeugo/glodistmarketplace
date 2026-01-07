@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server'
 
 const API_BASE_URL = 'https://glodistapi.onrender.com/api'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const cookieStore = await cookies()
     const authToken = cookieStore.get('auth_token')?.value
@@ -17,7 +17,14 @@ export async function GET() {
       headers.Authorization = `Bearer ${authToken}`
     }
 
-    const response = await fetch(`${API_BASE_URL}/products/`, {
+    const boutiqueId = request.nextUrl.searchParams.get('boutique')
+
+    let apiUrl = `${API_BASE_URL}/products/`
+    if (boutiqueId) {
+      apiUrl += `?boutique=${boutiqueId}`
+    }
+
+    const response = await fetch(apiUrl, {
       method: 'GET',
       headers
     })
