@@ -1,23 +1,32 @@
 "use client"
 
 import Link from "next/link"
-import { ShoppingCart, User, Search, Menu, Store, LayoutDashboard } from "lucide-react"
+import { ShoppingCart, Search, Menu, Store } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useState } from "react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { useState, useEffect } from "react"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { AuthManager } from "@/lib/auth"
+import { User } from "@/lib/api"
 
 export function Navbar() {
-  const [isLoggedIn, setIsLoggedIn] = useState(true)
-  const [hasShop, setHasShop] = useState(true)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+
+  useEffect(() => {
+    const checkAuth = () => {
+      const authenticated = AuthManager.isAuthenticated()
+      const userData = AuthManager.getUser()
+      setIsLoggedIn(authenticated)
+      setUser(userData)
+    }
+
+    checkAuth()
+    
+    // Écouter les changements d'authentification
+    const interval = setInterval(checkAuth, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -31,10 +40,13 @@ export function Navbar() {
           </Link>
 
           <nav className="hidden md:flex items-center space-x-6 text-sm font-medium">
-            <Link href="/" className="transition-colors hover:text-primary">
+            <Link href="/" className="transition-colors hover:text-primary hover:scale-105 transform duration-200">
               Accueil
             </Link>
-            <Link href="/shops" className="transition-colors hover:text-primary">
+            <Link href="/products" className="transition-colors hover:text-primary hover:scale-105 transform duration-200">
+              Produits
+            </Link>
+            <Link href="/shops" className="transition-colors hover:text-primary hover:scale-105 transform duration-200">
               Boutiques
             </Link>
           </nav>
@@ -51,52 +63,16 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center space-x-2 md:space-x-4">
-            {isLoggedIn && hasShop && (
-              <Link href="/dashboard" className="hidden lg:block">
-                <Button variant="ghost" className="text-primary font-bold gap-2 hover:bg-primary/5">
-                  <LayoutDashboard className="h-4 w-4" />
-                  Ma Boutique
-                </Button>
-              </Link>
-            )}
-
             <Link href="/cart">
-              <Button variant="ghost" size="icon" className="relative">
+              <Button variant="ghost" size="icon" className="relative hover:scale-110 transition-transform duration-200">
                 <ShoppingCart className="h-5 w-5" />
-                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[10px] font-bold">
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[10px] font-bold animate-pulse">
                   3
                 </span>
               </Button>
             </Link>
 
-            {isLoggedIn ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full border border-primary/10">
-                    <User className="h-5 w-5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Mon Compte</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/profile">Mon Profil</Link>
-                  </DropdownMenuItem>
-                  {hasShop && (
-                    <DropdownMenuItem asChild>
-                      <Link href="/dashboard" className="text-primary font-bold">
-                        <LayoutDashboard className="mr-2 h-4 w-4" />
-                        Ma Boutique
-                      </Link>
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-destructive" onClick={() => setIsLoggedIn(false)}>
-                    Déconnexion
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
+            {!isLoggedIn && (
               <div className="hidden items-center space-x-1 md:flex">
                 <Link href="/login">
                   <Button variant="ghost" size="sm" className="text-xs">
@@ -111,24 +87,18 @@ export function Navbar() {
               </div>
             )}
 
-            <Link href={hasShop && isLoggedIn ? "/dashboard" : "/shop-registration"}>
-              <Button
-                variant="outline"
-                className="hidden border-primary text-primary hover:bg-primary/10 md:inline-flex bg-transparent"
-              >
-                {hasShop && isLoggedIn ? (
-                  <>
-                    <LayoutDashboard className="mr-2 h-4 w-4" />
-                    Ma Boutique
-                  </>
-                ) : (
-                  <>
-                    <Store className="mr-2 h-4 w-4" />
-                    Vendre sur Glodist
-                  </>
-                )}
-              </Button>
-            </Link>
+            {/* Masquer le bouton "Vendre sur Glodist" pour les vendeurs */}
+            {(!isLoggedIn || (user && user.role !== 'Vendeur')) && (
+              <Link href="/shop-registration">
+                <Button
+                  variant="outline"
+                  className="hidden border-primary text-primary hover:bg-primary/10 md:inline-flex bg-transparent"
+                >
+                  <Store className="mr-2 h-4 w-4" />
+                  Vendre sur Glodist
+                </Button>
+              </Link>
+            )}
 
             <Sheet>
               <SheetTrigger asChild>
@@ -152,24 +122,12 @@ export function Navbar() {
                     <Link href="/" className="px-2 py-3 text-lg font-semibold hover:text-primary">
                       Accueil
                     </Link>
+                    <Link href="/products" className="px-2 py-3 text-lg font-semibold hover:text-primary">
+                      Produits
+                    </Link>
                     <Link href="/shops" className="px-2 py-3 text-lg font-semibold hover:text-primary">
                       Boutiques
                     </Link>
-                    {isLoggedIn && (
-                      <>
-                        <Link
-                          href="/profile"
-                          className="px-2 py-3 text-lg font-semibold hover:text-primary border-t pt-4 mt-2"
-                        >
-                          Mon Profil
-                        </Link>
-                        {hasShop && (
-                          <Link href="/dashboard" className="px-2 py-3 text-lg font-semibold text-primary">
-                            Ma Boutique
-                          </Link>
-                        )}
-                      </>
-                    )}
                   </nav>
                   {!isLoggedIn && (
                     <div className="flex flex-col gap-2 pt-4 border-t">

@@ -17,9 +17,12 @@ import {
   Store,
   ArrowLeft,
   ImagePlus,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
@@ -29,24 +32,213 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { AuthManager } from "@/lib/auth"
+
+import { useToast } from "@/hooks/use-toast"
+
+// Définir les types
+type Boutique = {
+  id: number;
+  name: string;
+  nom: string;
+  description: string;
+  user_id: number;
+};
+
+type Category = {
+  id: number;
+  libelle: string;
+};
+
+type Product = {
+  id: number;
+  nom: string;
+  description: string;
+  prix: number;
+  stock: number;
+  statut_produit: string;
+  categorie_nom: string;
+  medias: { url: string }[];
+};
 
 export default function ShopDashboard() {
+  const router = useRouter()
+  const { toast } = useToast()
+  
+  // --- COMPONENT STATE ---
+  const [shop, setShop] = useState<Partial<Boutique>>({})
+  const [products, setProducts] = useState<Product[]>([])
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true)
   const [activeTab, setActiveTab] = useState("overview")
   const [showAddProduct, setShowAddProduct] = useState(false)
+
+  // Add Product Form State
+  const [categories, setCategories] = useState<Category[]>([])
+  const [newProduct, setNewProduct] = useState({
+    nom: "",
+    description: "",
+    prix: "",
+    stock: "",
+    categorie: "",
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Mock data state (for existing UI parts)
   const [editingProduct, setEditingProduct] = useState<any>(null)
   const [selectedOrder, setSelectedOrder] = useState<any>(null)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!AuthManager.isAuthenticated()) {
+        router.push("/login")
+        return
+      }
+
+      // 1. Fetch categories first, as it's independent
+      try {
+        const res = await fetch("/api/products/categories")
+        if (!res.ok) {
+          throw new Error(`Impossible de charger les catégories (${res.statusText})`)
+        }
+        const data = await res.json()
+        setCategories(data.results || [])
+      } catch (error: any) {
+        console.error(error)
+        toast({
+          title: "Erreur Catégories",
+          description: error.message || "Impossible de charger les catégories de produits.",
+          variant: "destructive",
+        })
+      }
+
+      // 2. Fetch shop data
+      try {
+        const res = await fetch("/api/user/shop", { credentials: "include" })
+        if (!res.ok) throw new Error("Boutique non trouvée.")
+        const data = await res.json()
+        if (data.shop && data.shop.results && data.shop.results.length > 0) {
+          setShop(data.shop.results[0])
+          console.log("Shop data fetched:", data.shop.results[0])
+        } else {
+          toast({ title: "Aucune boutique", description: "Vous n'avez pas encore de boutique.", variant: "default" })
+          router.push("/shop-registration")
+        }
+      } catch (err) {
+        console.error(err)
+        router.push("/")
+      }
+    }
+
+    fetchData()
+  }, [router, toast])
+
+  // Fetch products when shop ID is available
+  useEffect(() => {
+    const fetchProducts = async () => {
+      if (!shop?.id) {
+        console.log("Shop ID not available, skipping product fetch.")
+        return
+      }
+
+      setIsLoadingProducts(true)
+      try {
+        const productApiUrl = `/api/products/?boutique=${shop.id}`
+        console.log("Fetching products from:", productApiUrl)
+        const res = await fetch(productApiUrl, { credentials: "include" })
+        if (!res.ok) {
+          throw new Error(`Impossible de charger les produits (${res.statusText})`)
+        }
+        const data = await res.json()
+        console.log("Products data received:", data)
+        setProducts(data || [])
+      } catch (error: any) {
+        console.error(error)
+        toast({
+          title: "Erreur Produits",
+          description: error.message || "Impossible de charger vos produits.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsLoadingProducts(false)
+      }
+    }
+
+    fetchProducts()
+  }, [shop?.id, toast])
+
+  // --- EVENT HANDLERS ---
+  const handleNewProductChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { id, value } = e.target
+    setNewProduct(prev => ({ ...prev, [id]: value }))
+  }
+
+  const handleProductSubmit = async () => {
+    if (!newProduct.nom || !newProduct.prix || !newProduct.stock || !newProduct.categorie) {
+      toast({
+        title: "Champs manquants",
+        description: "Veuillez remplir tous les champs obligatoires.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!shop?.id) {
+       toast({ title: "Erreur", description: "ID de la boutique introuvable.", variant: "destructive" })
+       return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const payload = {
+        nom: newProduct.nom,
+        description: newProduct.description,
+        prix: parseFloat(newProduct.prix),
+        stock: parseInt(newProduct.stock, 10),
+        categorie: parseInt(newProduct.categorie, 10),
+        boutique: shop.id,
+        statut_produit: "actif", // Default status
+      }
+
+      const response = await fetch('/api/products/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        const specificError = errorData.details?.nom?.[0] || errorData.error || 'Une erreur est survenue.'
+        throw new Error(specificError)
+      }
+      
+      const newProductData = await response.json();
+
+      toast({
+        title: "Produit ajouté ! 🎉",
+        description: `'${newProduct.nom}' a été ajouté avec succès à votre boutique.`,
+      })
+
+      setNewProduct({ nom: "", description: "", prix: "", stock: "", categorie: "" })
+      setShowAddProduct(false)
+      // Refresh product list
+      setProducts(prevProducts => [newProductData, ...prevProducts])
+      
+    } catch (error: any) {
+      toast({
+        title: "Erreur lors de l'ajout",
+        description: error.message,
+        variant: "destructive",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   // Données fictives selon MCD
   const orders = [
     { id: "CMD-2025-001", customer: "Jean Dupont", date: "29/12/2025", total: 450000, status: "En attente" },
     { id: "CMD-2025-002", customer: "Marie Ngo", date: "28/12/2025", total: 70000, status: "Livrée" },
     { id: "CMD-2025-003", customer: "Samuel Eto'o", date: "27/12/2025", total: 125000, status: "En cours" },
-  ]
-
-  const products = [
-    { id: "P1", name: "Smartphone Pro Max X1", price: 450000, stock: 12, category: "Électronique", status: "Actif" },
-    { id: "P2", name: "Écouteurs Sans Fil Pro", price: 35000, stock: 45, category: "Électronique", status: "Actif" },
-    { id: "P3", name: "Chaussures Elite", price: 42000, stock: 0, category: "Mode", status: "Inactif" },
   ]
 
   const customers = [
@@ -67,6 +259,7 @@ export default function ShopDashboard() {
     }
   }
 
+  // --- Affichage du tableau de bord
   return (
     <div className="flex min-h-screen bg-muted/20">
       {/* Sidebar - Desktop */}
@@ -82,7 +275,7 @@ export default function ShopDashboard() {
               <Store className="h-5 w-5 text-white" />
             </div>
             <div className="min-w-0">
-              <p className="font-black text-sm truncate uppercase tracking-tighter text-primary">Electro Cam</p>
+              <p className="font-black text-sm truncate uppercase tracking-tighter text-primary">{shop.name || shop.nom || ''}</p>
               <p className="text-[10px] text-muted-foreground font-bold">VENDEUR VÉRIFIÉ</p>
             </div>
           </div>
@@ -143,33 +336,34 @@ export default function ShopDashboard() {
               <CardContent className="p-6 space-y-6">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Nom du produit (Libelle)</Label>
-                    <Input id="name" placeholder="Ex: iPhone 16 Pro" />
+                    <Label htmlFor="nom">Nom du produit (Libelle)</Label>
+                    <Input id="nom" value={newProduct.nom} onChange={handleNewProductChange} placeholder="Ex: iPhone 16 Pro" />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="category">Catégorie</Label>
+                    <Label htmlFor="categorie">Catégorie</Label>
                     <select
-                      id="category"
+                      id="categorie"
+                      value={newProduct.categorie}
+                      onChange={handleNewProductChange}
                       className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
                     >
-                      <option>Électronique</option>
-                      <option>Mode</option>
-                      <option>Maison</option>
+                      <option value="" disabled>Sélectionner une catégorie</option>
+                      {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.libelle}</option>)}
                     </select>
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="desc">Description</Label>
-                  <Textarea id="desc" placeholder="Détails du produit..." className="min-h-[100px]" />
+                  <Label htmlFor="description">Description</Label>
+                  <Textarea id="description" value={newProduct.description} onChange={handleNewProductChange} placeholder="Détails du produit..." className="min-h-[100px]" />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Prix (XAF)</Label>
-                    <Input id="price" type="number" placeholder="0" />
+                    <Label htmlFor="prix">Prix (XAF)</Label>
+                    <Input id="prix" type="number" value={newProduct.prix} onChange={handleNewProductChange} placeholder="0" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="stock">Stock disponible</Label>
-                    <Input id="stock" type="number" placeholder="0" />
+                    <Input id="stock" type="number" value={newProduct.stock} onChange={handleNewProductChange} placeholder="0" />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -180,8 +374,8 @@ export default function ShopDashboard() {
                     <p className="text-xs text-muted-foreground mt-1">PNG, JPG jusqu'à 5Mo</p>
                   </div>
                 </div>
-                <Button className="w-full py-6 font-bold" onClick={() => setShowAddProduct(false)}>
-                  Enregistrer le produit
+                <Button className="w-full py-6 font-bold" onClick={handleProductSubmit} disabled={isSubmitting}>
+                  {isSubmitting ? "Enregistrement..." : "Enregistrer le produit"}
                 </Button>
               </CardContent>
             </Card>
@@ -191,12 +385,14 @@ export default function ShopDashboard() {
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <h1 className="text-3xl font-black tracking-tight text-primary">
-                  {activeTab === "overview" && "Tableau de bord"}
-                  {activeTab === "products" && "Gestion des Produits"}
-                  {activeTab === "orders" && "Commandes Clients"}
-                  {activeTab === "customers" && "Base Clients"}
+                  {shop.name || shop.nom || 'Ma Boutique'}
                 </h1>
-                <p className="text-muted-foreground">Gestion complète de Glodist - Electro Cam Sarl</p>
+                <p className="text-muted-foreground">
+                  {activeTab === "overview" && "Vue d'ensemble de votre activité"}
+                  {activeTab === "products" && "Gestion de vos produits"}
+                  {activeTab === "orders" && "Suivi de vos commandes client"}
+                  {activeTab === "customers" && "Historique de vos clients"}
+                </p>
               </div>
               <Button
                 className="gap-2 bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold px-6 shadow-lg shadow-secondary/20"
@@ -270,10 +466,10 @@ export default function ShopDashboard() {
                               <Package className="h-5 w-5 text-muted-foreground/30" />
                             </div>
                             <div className="flex-1">
-                              <p className="font-bold text-sm">{p.name}</p>
-                              <p className="text-xs text-muted-foreground">{p.category}</p>
+                              <p className="font-bold text-sm">{p.nom}</p>
+                              <p className="text-xs text-muted-foreground">{p.categorie_nom}</p>
                             </div>
-                            <p className="font-black text-secondary">{p.price.toLocaleString()} XAF</p>
+                            <p className="font-black text-secondary">{p.prix.toLocaleString()} XAF</p>
                           </div>
                         ))}
                       </div>
@@ -297,82 +493,105 @@ export default function ShopDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {products.map((p) => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
-                        <TableCell className="text-xs">{p.category}</TableCell>
-                        <TableCell className="text-right font-bold text-primary">
-                          {p.price.toLocaleString()} XAF
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${p.stock < 5 ? "bg-destructive/10 text-destructive" : "bg-secondary/10 text-secondary"}`}
-                          >
-                            {p.stock} pcs
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={p.status === "Actif" ? "default" : "outline"}
-                            className={p.status === "Actif" ? "bg-secondary" : ""}
-                          >
-                            {p.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Dialog
-                            open={editingProduct?.id === p.id}
-                            onOpenChange={(open) => !open && setEditingProduct(null)}
-                          >
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-primary"
-                                onClick={() => setEditingProduct(p)}
-                              >
-                                <Settings className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="sm:max-w-[500px]">
-                              <DialogHeader>
-                                <DialogTitle>Modifier le produit</DialogTitle>
-                                <DialogDescription>Mettez à jour les informations de {p.name}</DialogDescription>
-                              </DialogHeader>
-                              <div className="grid gap-4 py-4">
-                                <div className="grid gap-2">
-                                  <Label htmlFor="edit-name">Nom (Libelle)</Label>
-                                  <Input id="edit-name" defaultValue={p.name} />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div className="grid gap-2">
-                                    <Label htmlFor="edit-price">Prix (XAF)</Label>
-                                    <Input id="edit-price" type="number" defaultValue={p.price} />
-                                  </div>
-                                  <div className="grid gap-2">
-                                    <Label htmlFor="edit-stock">Stock</Label>
-                                    <Input id="edit-stock" type="number" defaultValue={p.stock} />
-                                  </div>
-                                </div>
-                                <div className="grid gap-2">
-                                  <Label htmlFor="edit-status">Statut</Label>
-                                  <select className="w-full h-10 px-3 rounded-md border" defaultValue={p.status}>
-                                    <option>Actif</option>
-                                    <option>Inactif</option>
-                                  </select>
-                                </div>
-                              </div>
-                              <Button
-                                className="w-full bg-secondary text-secondary-foreground"
-                                onClick={() => setEditingProduct(null)}
-                              >
-                                Enregistrer les modifications
-                              </Button>
-                            </DialogContent>
-                          </Dialog>
+                    {isLoadingProducts ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-12">
+                          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
+                          <p className="mt-2 text-sm text-muted-foreground">Chargement des produits...</p>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : products.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-12">
+                           <Package className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+                           <h3 className="mt-4 font-bold">Aucun produit trouvé</h3>
+                           <p className="text-sm text-muted-foreground mt-1">Commencez par ajouter votre premier produit.</p>
+                           <Button className="mt-4" onClick={() => setShowAddProduct(true)}>
+                             <Plus className="h-4 w-4 mr-2" />
+                             Ajouter un produit
+                           </Button>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      products.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell className="font-medium">{p.nom}</TableCell>
+                          <TableCell className="text-xs">{p.categorie_nom}</TableCell>
+                          <TableCell className="text-right font-bold text-primary">
+                            {p.prix.toLocaleString()} XAF
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                p.stock < 5 ? "bg-destructive/10 text-destructive" : "bg-secondary/10 text-secondary"
+                              }`}
+                            >
+                              {p.stock} pcs
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={p.statut_produit && p.statut_produit.toLowerCase() === "actif" ? "default" : "outline"}
+                              className={p.statut_produit && p.statut_produit.toLowerCase() === "actif" ? "bg-secondary" : ""}
+                            >
+                              {p.statut_produit}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Dialog
+                              open={editingProduct?.id === p.id}
+                              onOpenChange={(open) => !open && setEditingProduct(null)}
+                            >
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-primary"
+                                  onClick={() => setEditingProduct(p)}
+                                >
+                                  <Settings className="h-4 w-4" />
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent className="sm:max-w-[500px]">
+                                <DialogHeader>
+                                  <DialogTitle>Modifier le produit</DialogTitle>
+                                  <DialogDescription>Mettez à jour les informations de {p.nom}</DialogDescription>
+                                </DialogHeader>
+                                <div className="grid gap-4 py-4">
+                                  <div className="grid gap-2">
+                                    <Label htmlFor="edit-name">Nom (Libelle)</Label>
+                                    <Input id="edit-name" defaultValue={p.nom} />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid gap-2">
+                                      <Label htmlFor="edit-price">Prix (XAF)</Label>
+                                      <Input id="edit-price" type="number" defaultValue={p.prix} />
+                                    </div>
+                                    <div className="grid gap-2">
+                                      <Label htmlFor="edit-stock">Stock</Label>
+                                      <Input id="edit-stock" type="number" defaultValue={p.stock} />
+                                    </div>
+                                  </div>
+                                  <div className="grid gap-2">
+                                    <Label htmlFor="edit-status">Statut</Label>
+                                    <select className="w-full h-10 px-3 rounded-md border" defaultValue={p.statut_produit}>
+                                      <option>Actif</option>
+                                      <option>Inactif</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <Button
+                                  className="w-full bg-secondary text-secondary-foreground"
+                                  onClick={() => setEditingProduct(null)}
+                                >
+                                  Enregistrer les modifications
+                                </Button>
+                              </DialogContent>
+                            </Dialog>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </Card>

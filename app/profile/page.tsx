@@ -1,219 +1,615 @@
 "use client"
 
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Navbar } from "@/components/navbar"
+import { UserProfileBanner } from "@/components/user-profile-banner"
+import { PageTransition, FadeTransition } from "@/components/page-transition"
+import { BackButton } from "@/components/back-button"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { User, Package, Heart, Settings, ShieldCheck, MapPin, FileText, Download, CheckCircle } from "lucide-react"
-import { useState } from "react"
+import { Separator } from "@/components/ui/separator"
+import { FileUpload } from "@/components/file-upload"
+import { AuthManager, User } from "@/lib/auth"
+import { apiClient } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { 
+  User as UserIcon, 
+  Mail, 
+  Phone, 
+  Calendar, 
+  Shield, 
+  Edit, 
+  Save,
+  X,
+  ShoppingBag,
+  FileText,
+  CheckCircle,
+  Clock,
+  AlertTriangle
+} from "lucide-react"
+import { Heart, Settings, ShieldCheck, MapPin, Download } from "lucide-react"
 import Link from "next/link"
 
 export default function ProfilePage() {
-  const [activeTab, setActiveTab] = useState("profile")
+  const [activeTab, setActiveTab] = useState<string>("profile")
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState({
+    prenom: "",
+    nom: "",
+    telephone: ""
+  })
+  const [identityFile, setIdentityFile] = useState<File | null>(null)
+  const [documentType, setDocumentType] = useState<string>("")
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
+  const [verificationStatus, setVerificationStatus] = useState<'none' | 'pending' | 'verified' | 'rejected'>('none')
+  const router = useRouter()
+  const { toast } = useToast()
 
-  const user = {
-    name: "Jean Dupont",
-    email: "jean.dupont@email.cm",
-    verified: true,
-    orders: 12,
-    location: "Akwa, Douala",
+  useEffect(() => {
+    const checkAuth = async () => {
+      const authenticated = AuthManager.isAuthenticated()
+      const userData = AuthManager.getUser()
+      
+      if (!authenticated || !userData) {
+        toast({
+          title: "Accès refusé",
+          description: "Vous devez être connecté pour accéder à votre profil",
+          variant: "destructive",
+        })
+        router.push('/login')
+        return
+      }
+      
+      try {
+        // Essayer de récupérer le profil depuis l'API pour avoir les données les plus récentes
+        const freshProfile = await apiClient.getUserProfile()
+        setUser(freshProfile)
+        setEditForm({
+          prenom: freshProfile.prenom,
+          nom: freshProfile.nom,
+          telephone: freshProfile.telephone
+        })
+        
+        // Récupérer le statut de vérification réel depuis l'API
+        try {
+          const verificationData = await apiClient.getVerificationStatus()
+          // Mapper le statut de l'API vers notre état local
+          if (verificationData.status === 'verified') {
+            setVerificationStatus('verified')
+          } else if (verificationData.status === 'pending') {
+            setVerificationStatus('pending')
+          } else if (verificationData.status === 'rejected') {
+            setVerificationStatus('rejected')
+          } else {
+            setVerificationStatus('none')
+          }
+        } catch (verificationError) {
+          // En cas d'erreur, utiliser le statut basé sur le compte
+          setVerificationStatus(freshProfile.statut_compte === 'Actif' ? 'verified' : 'none')
+        }
+      } catch (error) {
+        // En cas d'erreur, utiliser les données du cookie
+        console.warn('Impossible de récupérer le profil depuis l\'API, utilisation des données locales')
+        setUser(userData)
+        setEditForm({
+          prenom: userData.prenom,
+          nom: userData.nom,
+          telephone: userData.telephone
+        })
+        setVerificationStatus(userData.statut_compte === 'Actif' ? 'verified' : 'none')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    checkAuth()
+  }, [router, toast])
+
+  const getInitials = (prenom: string, nom: string) => {
+    return `${prenom.charAt(0)}${nom.charAt(0)}`.toUpperCase()
+  }
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('fr-FR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
+  }
+
+  const handleEditToggle = () => {
+    if (isEditing) {
+      // Annuler les modifications
+      setEditForm({
+        prenom: user?.prenom || "",
+        nom: user?.nom || "",
+        telephone: user?.telephone || ""
+      })
+    }
+    setIsEditing(!isEditing)
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditForm(prev => ({
+      ...prev,
+      [e.target.name]: e.target.value
+    }))
+  }
+
+  const handleSave = async () => {
+    try {
+      setLoading(true)
+      
+      // Appel API pour mettre à jour le profil
+      const updatedProfile = await apiClient.updateUserProfile({
+        prenom: editForm.prenom,
+        nom: editForm.nom,
+        telephone: editForm.telephone
+      })
+      
+      toast({
+        title: "Profil mis à jour",
+        description: "Vos informations ont été mises à jour avec succès",
+      })
+      setIsEditing(false)
+      
+      // Mettre à jour l'utilisateur local avec les données de l'API
+      setUser(updatedProfile)
+      
+    } catch (error) {
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible de mettre à jour le profil",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleIdentityUpload = async () => {
+    if (!identityFile || !documentType) return
+
+    try {
+      setUploadStatus('uploading')
+      
+      const formData = new FormData()
+      formData.append('document', identityFile)
+      formData.append('document_type', documentType)
+      
+      const response = await fetch('/api/user/identity', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include'
+      })
+
+      if (!response.ok) {
+        throw new Error('Erreur lors du téléchargement du document')
+      }
+
+      setUploadStatus('success')
+      setVerificationStatus('pending')
+      setIdentityFile(null)
+      setDocumentType("")
+      
+      toast({
+        title: "Document téléchargé",
+        description: "Votre document a été téléchargé avec succès. Il sera vérifié sous 24-48h.",
+      })
+      
+    } catch (error) {
+      setUploadStatus('error')
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible de télécharger le document",
+        variant: "destructive",
+      })
+    }
+  }
+
+  if (loading) {
+    return (
+      <PageTransition className="min-h-screen bg-background">
+        <Navbar />
+        <UserProfileBanner />
+        <main className="container mx-auto px-4 md:px-6 py-8">
+          <div className="animate-pulse space-y-6">
+            <div className="h-8 bg-muted rounded w-48"></div>
+            <div className="h-64 bg-muted rounded"></div>
+          </div>
+        </main>
+      </PageTransition>
+    )
+  }
+
+  if (!user) {
+    return null
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-muted/30">
+    <PageTransition className="min-h-screen bg-background">
       <Navbar />
-      <main className="flex-1 container mx-auto px-4 py-12 md:px-6">
-        <div className="grid gap-8 md:grid-cols-4">
-          {/* Sidebar Menu */}
-          <Card className="md:col-span-1 h-fit border-none shadow-sm">
-            <CardContent className="p-6 space-y-2">
-              <Button
-                variant="ghost"
-                onClick={() => setActiveTab("profile")}
-                className={`w-full justify-start gap-3 ${activeTab === "profile" ? "bg-primary/10 text-primary font-bold" : "hover:bg-primary/5"}`}
-              >
-                <User className="h-5 w-5" /> Mon Profil
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setActiveTab("orders")}
-                className={`w-full justify-start gap-3 ${activeTab === "orders" ? "bg-primary/10 text-primary font-bold" : "hover:bg-primary/5"}`}
-              >
-                <Package className="h-5 w-5" /> Mes Commandes
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setActiveTab("wishlist")}
-                className={`w-full justify-start gap-3 ${activeTab === "wishlist" ? "bg-primary/10 text-primary font-bold" : "hover:bg-primary/5"}`}
-              >
-                <Heart className="h-5 w-5" /> Liste de souhaits
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setActiveTab("settings")}
-                className={`w-full justify-start gap-3 ${activeTab === "settings" ? "bg-primary/10 text-primary font-bold" : "hover:bg-primary/5"}`}
-              >
-                <Settings className="h-5 w-5" /> Paramètres
-              </Button>
-            </CardContent>
-          </Card>
+      <UserProfileBanner />
+      
+      <main className="container mx-auto px-4 md:px-6 py-8">
+        <div className="flex items-center gap-4 mb-8">
+          <BackButton />
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Mon Profil</h1>
+            <p className="text-muted-foreground">
+              Gérez vos informations personnelles et vos préférences
+            </p>
+          </div>
+        </div>
 
-          {/* Main Content */}
-          <div className="md:col-span-3 space-y-8">
-            {activeTab === "profile" && (
-              <>
-                <Card className="border-none shadow-sm">
-                  <CardHeader className="flex flex-row items-center gap-6 p-8">
-                    <div className="h-24 w-24 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-4xl font-black">
-                      {user.name[0]}
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-3xl font-bold">{user.name}</h2>
-                        {user.verified && (
-                          <Badge variant="secondary" className="flex items-center gap-1">
-                            <ShieldCheck className="h-3 w-3" /> Vérifié
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-muted-foreground">{user.email}</p>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground pt-2">
-                        <MapPin className="h-4 w-4" /> {user.location}
-                      </div>
-                    </div>
-                  </CardHeader>
-                </Card>
-                <div className="grid gap-6 md:grid-cols-2">
-                  <Card className="border-none shadow-sm">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Package className="h-5 w-5 text-primary" /> Commandes récentes
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-muted-foreground text-sm italic">
-                        Vous n'avez pas encore de commandes actives.
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-none shadow-sm border-l-4 border-l-primary">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-primary">
-                        <ShieldCheck className="h-5 w-5" /> Vérification & Documents
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                      <div className="space-y-4 p-4 rounded-xl bg-primary/5 border border-primary/10">
-                        <div className="flex items-start gap-3">
-                          <CheckCircle className="h-6 w-6 text-primary shrink-0 mt-1" />
-                          <div className="space-y-1">
-                            <p className="font-bold text-sm">Vérification de compte</p>
-                            <p className="text-xs text-muted-foreground leading-relaxed">
-                              Pour garantir la sécurité et la crédibilité de tous les échanges sur Glodist, chaque
-                              compte doit être vérifié par une pièce d'identité officielle.
-                            </p>
-                          </div>
-                        </div>
-                        <Button
-                          asChild
-                          className="w-full bg-primary hover:bg-primary/90 text-white font-bold"
-                          size="sm"
-                        >
-                          <Link href="/verify-identity">
-                            <ShieldCheck className="h-4 w-4 mr-2" /> Vérifier mon identité
-                          </Link>
-                        </Button>
-                      </div>
-
-                      <div className="space-y-3">
-                        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                          Documents officiels
-                        </p>
-                        <div className="grid gap-2">
-                          <Button
-                            variant="outline"
-                            className="w-full justify-between h-auto py-3 px-4 border-primary/20 hover:bg-primary/5 hover:text-primary transition-colors group bg-transparent"
-                            asChild
-                          >
-                            <a href="/termes-conditions-glodist.pdf" download="Termes_et_Conditions_Glodist.pdf">
-                              <div className="flex items-center gap-3">
-                                <FileText className="h-4 w-4 text-primary" />
-                                <span className="text-sm font-medium">Termes & Conditions</span>
-                              </div>
-                              <Download className="h-4 w-4 opacity-50 group-hover:opacity-100" />
-                            </a>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="w-full justify-between h-auto py-3 px-4 border-primary/20 hover:bg-primary/5 hover:text-primary transition-colors group bg-transparent"
-                            asChild
-                          >
-                            <a href="/guide-usage-glodist.pdf" download="Guide_Usage_Glodist.pdf">
-                              <div className="flex items-center gap-3">
-                                <FileText className="h-4 w-4 text-primary" />
-                                <span className="text-sm font-medium">Guide d'usage Glodist</span>
-                              </div>
-                              <Download className="h-4 w-4 opacity-50 group-hover:opacity-100" />
-                            </a>
-                          </Button>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
+        <div className="grid gap-6 md:grid-cols-4">
+          {/* Carte de profil principal */}
+          <FadeTransition>
+            <Card className="md:col-span-1 hover:shadow-md transition-shadow duration-200">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <UserIcon className="h-5 w-5" />
+                    Informations personnelles
+                  </CardTitle>
+                  <CardDescription>
+                    Vos informations de base et de contact
+                  </CardDescription>
                 </div>
-              </>
-            )}
+                <Button
+                  variant={isEditing ? "destructive" : "outline"}
+                  size="sm"
+                  onClick={handleEditToggle}
+                  className="gap-2"
+                >
+                  {isEditing ? (
+                    <>
+                      <X className="h-4 w-4" />
+                      Annuler
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="h-4 w-4" />
+                      Modifier
+                    </>
+                  )}
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-6">
+                  <Avatar className="h-20 w-20 border-4 border-primary/20">
+                    <AvatarImage src="" alt={`${user.prenom} ${user.nom}`} />
+                    <AvatarFallback className="bg-primary/10 text-primary font-bold text-xl">
+                      {getInitials(user.prenom, user.nom)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="space-y-1">
+                    <h2 className="text-2xl font-bold">{user.prenom} {user.nom}</h2>
+                    <p className="text-muted-foreground">{user.email}</p>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={user.role === 'Vendeur' ? 'default' : 'secondary'}>
+                        {user.role}
+                      </Badge>
+                      {user.statut_compte === 'Actif' && (
+                        <Badge variant="outline" className="text-green-600 border-green-600">
+                          <Shield className="h-3 w-3 mr-1" />
+                          Compte vérifié
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-            {activeTab === "orders" && (
-              <Card className="border-none shadow-sm">
+                <Separator />
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="prenom">Prénom</Label>
+                    {isEditing ? (
+                      <Input
+                        id="prenom"
+                        name="prenom"
+                        value={editForm.prenom}
+                        onChange={handleInputChange}
+                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <UserIcon className="h-4 w-4 text-muted-foreground" />
+                        <span>{user.prenom}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="nom">Nom</Label>
+                    {isEditing ? (
+                      <Input
+                        id="nom"
+                        name="nom"
+                        value={editForm.nom}
+                        onChange={handleInputChange}
+                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <UserIcon className="h-4 w-4 text-muted-foreground" />
+                        <span>{user.nom}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                      <Mail className="h-4 w-4 text-muted-foreground" />
+                      <span>{user.email}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      L'email ne peut pas être modifié
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="telephone">Téléphone</Label>
+                    {isEditing ? (
+                      <Input
+                        id="telephone"
+                        name="telephone"
+                        value={editForm.telephone}
+                        onChange={handleInputChange}
+                        className="transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                      />
+                    ) : (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        <span>{user.telephone}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {isEditing && (
+                  <div className="flex justify-end">
+                    <Button onClick={handleSave} className="gap-2">
+                      <Save className="h-4 w-4" />
+                      Sauvegarder
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </FadeTransition>
+
+          {/* Carte d'informations supplémentaires */}
+          <div className="md:col-span-3 space-y-6">
+            <FadeTransition className="animation-delay-200">
+              <Card className="hover:shadow-md transition-shadow duration-200">
                 <CardHeader>
-                  <CardTitle>Mes Commandes</CardTitle>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calendar className="h-5 w-5" />
+                    Informations du compte
+                  </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="text-center py-12 space-y-4">
-                    <Package className="h-12 w-12 mx-auto text-muted-foreground opacity-20" />
-                    <p className="text-muted-foreground">Vous n'avez pas encore passé de commande.</p>
-                    <Button variant="outline">Commencer mes achats</Button>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium">Date de création</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {formatDate(user.date_creation)}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Nom d'utilisateur</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {user.username}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium">Statut du compte</Label>
+                    <Badge variant={user.statut_compte === 'Actif' ? 'default' : 'secondary'}>
+                      {user.statut_compte}
+                    </Badge>
                   </div>
                 </CardContent>
               </Card>
-            )}
+            </FadeTransition>
 
-            {activeTab === "wishlist" && (
-              <Card className="border-none shadow-sm">
-                <CardHeader>
-                  <CardTitle>Ma Liste de Souhaits</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground italic">Votre liste de souhaits est vide.</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {activeTab === "settings" && (
-              <Card className="border-none shadow-sm">
-                <CardHeader>
-                  <CardTitle>Paramètres du compte</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
-                      <h4 className="font-bold">Notifications</h4>
-                      <p className="text-sm text-muted-foreground">Gérez vos alertes par email et SMS.</p>
+            {user.role === 'Vendeur' && (
+              <FadeTransition className="animation-delay-300">
+                <Card className="hover:shadow-md transition-shadow duration-200">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <ShoppingBag className="h-5 w-5" />
+                      Informations vendeur
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label className="text-sm font-medium">Autorisation de vente</Label>
+                      <Badge variant={user.vente ? 'default' : 'secondary'}>
+                        {user.vente ? 'Autorisé' : 'Non autorisé'}
+                      </Badge>
                     </div>
-                    <div className="space-y-2">
-                      <h4 className="font-bold">Sécurité</h4>
+                    {user.vente && (
+                      <Button 
+                        className="w-full" 
+                        onClick={() => router.push('/dashboard')}
+                      >
+                        Accéder à ma boutique
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              </FadeTransition>
+            )}
+
+            <FadeTransition className="animation-delay-400">
+              <Card className="hover:shadow-md transition-shadow duration-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="h-5 w-5" />
+                    Vérification d'identité
+                  </CardTitle>
+                  <CardDescription>
+                    Téléchargez votre pièce d'identité pour vérifier votre compte
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Statut:</span>
+                    {verificationStatus === 'verified' && (
+                      <Badge variant="default" className="text-green-600 bg-green-100 border-green-600">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Vérifié
+                      </Badge>
+                    )}
+                    {verificationStatus === 'pending' && (
+                      <Badge variant="secondary" className="text-orange-600 bg-orange-100 border-orange-600">
+                        <Clock className="h-3 w-3 mr-1" />
+                        En attente
+                      </Badge>
+                    )}
+                    {verificationStatus === 'rejected' && (
+                      <Badge variant="destructive" className="text-red-600 bg-red-100 border-red-600">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Rejeté
+                      </Badge>
+                    )}
+                    {verificationStatus === 'none' && (
+                      <Badge variant="outline" className="text-gray-600">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Non vérifié
+                      </Badge>
+                    )}
+                  </div>
+
+                  {verificationStatus !== 'verified' && (
+                    <div className="space-y-4">
                       <p className="text-sm text-muted-foreground">
-                        Modifier votre mot de passe et vos informations de connexion.
+                        {verificationStatus === 'rejected' 
+                          ? 'Votre document a été rejeté. Veuillez télécharger un nouveau document.'
+                          : documentType === 'carte_identite'
+                          ? 'Téléchargez une photo claire du recto et verso de votre carte nationale d\'identité.'
+                          : documentType === 'passeport'
+                          ? 'Téléchargez une photo claire de la page d\'identité de votre passeport.'
+                          : documentType === 'permis_conduire'
+                          ? 'Téléchargez une photo claire du recto et verso de votre permis de conduire.'
+                          : 'Sélectionnez le type de document et téléchargez une copie claire pour vérifier votre compte.'
+                        }
+                      </p>
+                      
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="document-type">Type de document</Label>
+                          <Select 
+                            value={documentType} 
+                            onValueChange={(value) => {
+                              setDocumentType(value)
+                              // Réinitialiser le fichier et le statut si l'utilisateur change de type
+                              if (identityFile) {
+                                setIdentityFile(null)
+                                setUploadStatus('idle')
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Sélectionnez le type de document" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="carte_identite">Carte nationale d'identité</SelectItem>
+                              <SelectItem value="passeport">Passeport</SelectItem>
+                              <SelectItem value="permis_conduire">Permis de conduire</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Document</Label>
+                          <FileUpload
+                            onFileSelect={(file) => {
+                              setIdentityFile(file)
+                              if (file) {
+                                setUploadStatus('idle')
+                              }
+                            }}
+                            acceptedTypes="image/*,.pdf"
+                            maxSize={5}
+                            uploadStatus={uploadStatus}
+                            disabled={uploadStatus === 'uploading'}
+                          />
+                        </div>
+                      </div>
+
+                      {identityFile && documentType && uploadStatus === 'idle' && (
+                        <Button 
+                          onClick={handleIdentityUpload}
+                          className="w-full"
+                          disabled={!identityFile || !documentType}
+                        >
+                          Télécharger le document
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {verificationStatus === 'verified' && (
+                    <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                      <p className="text-sm text-green-800">
+                        Votre identité a été vérifiée avec succès. Vous avez maintenant accès à toutes les fonctionnalités de la plateforme.
                       </p>
                     </div>
-                  </div>
+                  )}
+
+                  {verificationStatus === 'pending' && (
+                    <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                      <p className="text-sm text-orange-800">
+                        Votre document est en cours de vérification. Nous vous contacterons sous 24-48h avec le résultat.
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
-            )}
+            </FadeTransition>
+
+            <FadeTransition className="animation-delay-500">
+              <Card className="hover:shadow-md transition-shadow duration-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <ShoppingBag className="h-5 w-5" />
+                    Mes achats
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Consultez l'historique de vos commandes et suivez vos livraisons
+                  </p>
+                  <Button 
+                    variant="outline"
+                    className="w-full" 
+                    onClick={() => router.push('/profile/orders')}
+                  >
+                    Voir mes commandes
+                  </Button>
+                </CardContent>
+              </Card>
+            </FadeTransition>
           </div>
         </div>
       </main>
-    </div>
+    </PageTransition>
   )
 }

@@ -1,8 +1,13 @@
+"use client"
+
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { ShieldCheck, Star, ShoppingCart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { AuthManager } from "@/lib/auth"
+import { useToast } from "@/hooks/use-toast"
 
 interface ProductCardProps {
   id: string
@@ -15,6 +20,26 @@ interface ProductCardProps {
 }
 
 export function ProductCard({ id, name, price, image, shop, verified, rating }: ProductCardProps) {
+  const router = useRouter()
+  const { toast } = useToast()
+
+  const handleAddToCart = () => {
+    if (!AuthManager.isAuthenticated()) {
+      toast({
+        title: "Connexion requise",
+        description: "Vous devez vous connecter pour ajouter des produits au panier",
+        variant: "destructive",
+      })
+      router.push(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`)
+      return
+    }
+
+    // Ici vous pouvez ajouter la logique d'ajout au panier
+    toast({
+      title: "Produit ajouté",
+      description: `${name} a été ajouté à votre panier`,
+    })
+  }
   return (
     <Card className="group overflow-hidden border-none shadow-sm hover:shadow-md transition-all">
       <CardHeader className="p-0">
@@ -37,7 +62,8 @@ export function ProductCard({ id, name, price, image, shop, verified, rating }: 
       <CardContent className="p-4 space-y-2">
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <Link
-            href={`/shops/${shop.toLowerCase().replace(/\s+/g, "-")}`}
+              href={''}
+            //href={`/shops/${shop.toLowerCase().replace(/\s+/g, "-")}`}
             className="font-medium hover:text-primary transition-colors flex items-center gap-1"
           >
             {shop}
@@ -56,7 +82,7 @@ export function ProductCard({ id, name, price, image, shop, verified, rating }: 
         </div>
       </CardContent>
       <CardFooter className="p-4 pt-0">
-        <Button className="w-full bg-primary hover:bg-primary/90">
+        <Button className="w-full bg-primary hover:bg-primary/90" onClick={handleAddToCart}>
           <ShoppingCart className="mr-2 h-4 w-4" />
           Ajouter au panier
         </Button>
