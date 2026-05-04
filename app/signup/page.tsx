@@ -12,6 +12,7 @@ import { PageTransition } from "@/components/page-transition"
 import { BackButton } from "@/components/back-button"
 import { useToast } from "@/hooks/use-toast"
 import { apiClient } from "@/lib/api"
+import { AppLogo } from "@/components/app-logo"
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
@@ -59,13 +60,23 @@ export default function SignupPage() {
     setIsLoading(true)
 
     try {
+      const baseUsername = (formData.first_name + formData.last_name)
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[^a-z0-9]/g, "")
+        .substring(0, 12)
+      const username = baseUsername + Math.floor(1000 + Math.random() * 9000)
+
       await apiClient.register({
-        role: "Client", statut_compte: "actif", username: formData.first_name.substring(0,1)+formData.last_name.substring(0,1),
+        role: "client",
+        account_status: "active",
+        can_sell: false,
+        username,
         email: formData.email,
         password: formData.password,
-        nom: formData.first_name,
-        prenom: formData.last_name,
-        telephone: formData.phone_number
+        first_name: formData.first_name,
+        last_name: formData.last_name,
+        phone: formData.phone_number
       })
       
       toast({
@@ -93,9 +104,8 @@ export default function SignupPage() {
       
       <Card className="w-full max-w-md hover:shadow-lg transition-shadow duration-300">
         <CardHeader className="space-y-1 text-center">
-          <div className="flex items-center justify-center gap-1 mb-4">
-            <span className="text-2xl font-black tracking-tighter text-secondary">Glo</span>
-            <span className="text-2xl font-black tracking-tighter text-primary">Dist</span>
+          <div className="flex items-center justify-center mb-4">
+            <AppLogo className="max-h-24 w-auto" priority />
           </div>
           <CardTitle className="text-2xl font-bold">Créer un compte</CardTitle>
           <CardDescription>

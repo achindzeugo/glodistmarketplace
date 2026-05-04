@@ -161,8 +161,6 @@ export default function ShopRegistrationPage() {
         return
       }
 
-      const currentUser = AuthManager.getUser()
-
       const res = await fetch("/api/boutiques", {
         method: "POST",
         headers: {
@@ -170,20 +168,15 @@ export default function ShopRegistrationPage() {
         },
         credentials: "include",
         body: JSON.stringify({
-          // include both keys in case backend expects `name` or `nom`
-          nom: form.name,
           name: form.name,
           description: form.description,
-          user_id: currentUser?.id ?? null,
-          // backend requires `boutiqueid` (validation error showed it's mandatory)
-          boutiqueid: currentUser?.id ?? null,
         }),
       })
 
       const data = await res.json().catch(() => null)
 
       if (!res.ok) {
-        throw new Error(data?.detail || "Erreur API")
+        throw new Error(data?.error || data?.detail || "Erreur API")
       }
 
       console.log("Boutique créée:", data)

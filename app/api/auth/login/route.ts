@@ -1,70 +1,110 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { extractApiErrorMessage, normalizeUser } from '@/lib/user-normalizer'
 
-const API_BASE_URL = 'https://glodistapi.onrender.com/api'
+const API_BASE_URL = 'https://glodistapi.onrender.com/api/v1'
+
+async function fetchProfile(accessToken: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/profile/`, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null)
+    throw new Error(extractApiErrorMessage(error, 'Impossible de récupérer le profil utilisateur'))
+  }
+
+  return response.json()
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json()
 
-    // Appel à l'API externe pour l'authentification
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: 'Email et mot de passe requis' },
+        { status: 400 }
+      )
+    }
+
     const response = await fetch(`${API_BASE_URL}/auth/login/`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => null)
       return NextResponse.json(
-        { error: error.detail || error.message || 'Erreur de connexion' },
+        { error: extractApiErrorMessage(error, 'Erreur de connexion') },
         { status: response.status }
       )
     }
 
-    const authData = await response.json()
-    
-    // Structure attendue: { access, refresh, user }
-    const { access, refresh, user } = authData
+    const authData = await response.json().catch(() => ({}))
+    const access =
+      authData?.access ||
+      authData?.access_token ||
+      authData?.token ||
+      authData?.data?.access
+    const refresh =
+      authData?.refresh ||
+      authData?.refresh_token ||
+      authData?.data?.refresh
 
-    // Créer la réponse avec les cookies HTTP-only
-    const responseData = {
-      user: user,
-      message: 'Connexion réussie'
+    if (!access) {
+      return NextResponse.json(
+        { error: 'La réponse de connexion ne contient pas de token d’accès' },
+        { status: 502 }
+      )
     }
 
-    const nextResponse = NextResponse.json(responseData)
+    const rawUser =
+      authData?.user ||
+      authData?.data?.user ||
+      await fetchProfile(access)
+    const user = normalizeUser(rawUser)
 
-    // Cookie pour le token d'accès (HTTP-only, secure, sameSite)
+    const nextResponse = NextResponse.json({
+      user,
+      message: 'Connexion réussie',
+    })
+
     nextResponse.cookies.set('auth_token', access, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24, // 1 jour (durée du token access)
-      path: '/'
+      maxAge: 60 * 60 * 24,
+      path: '/',
     })
 
-    // Cookie pour le refresh token (HTTP-only, secure, sameSite)
-    nextResponse.cookies.set('refresh_token', refresh, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 7, // 7 jours (durée du refresh token)
-      path: '/'
-    })
+    if (refresh) {
+      nextResponse.cookies.set('refresh_token', refresh, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 60 * 60 * 24 * 7,
+        path: '/',
+      })
+    }
 
-    // Cookie pour les données utilisateur (accessible côté client)
     nextResponse.cookies.set('user_data', JSON.stringify(user), {
       httpOnly: false,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 7, // 7 jours
-      path: '/'
+      maxAge: 60 * 60 * 24 * 7,
+      path: '/',
     })
 
     return nextResponse
-
   } catch (error) {
     console.error('Erreur lors de la connexion:', error)
     return NextResponse.json(

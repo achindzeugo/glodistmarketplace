@@ -1,138 +1,129 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { Minus, Plus, ShoppingCart, Trash2 } from "lucide-react"
 import { Navbar } from "@/components/navbar"
 import { UserProfileBanner } from "@/components/user-profile-banner"
 import { PageTransition, FadeTransition } from "@/components/page-transition"
 import { BackButton } from "@/components/back-button"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ShoppingCart, Minus, Plus, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-
-interface CartItem {
-  id: string
-  name: string
-  price: number
-  image: string
-  quantity: number
-  shop: string
-}
+import {
+  CART_UPDATED_EVENT,
+  CartItem,
+  getCartItems,
+  removeCartItem,
+  updateCartItemQuantity,
+} from "@/lib/cart"
 
 export default function CartPage() {
-  const [cartItems, setCartItems] = useState<CartItem[]>([
-    {
-      id: "1",
-      name: "Smartphone Pro Max X1",
-      price: 450000,
-      image: "/modern-smartphone.png",
-      quantity: 1,
-      shop: "Tech Global Cameroun"
-    },
-    {
-      id: "2",
-      name: "Écouteurs Sans Fil Pro",
-      price: 35000,
-      image: "/wireless-earbuds-charging-case.png",
-      quantity: 2,
-      shop: "Accessoires Plus"
-    }
-  ])
+  const [cartItems, setCartItems] = useState<CartItem[]>([])
   const router = useRouter()
   const { toast } = useToast()
 
+  useEffect(() => {
+    const syncCart = () => {
+      setCartItems(getCartItems())
+    }
+
+    syncCart()
+    window.addEventListener(CART_UPDATED_EVENT, syncCart)
+
+    return () => {
+      window.removeEventListener(CART_UPDATED_EVENT, syncCart)
+    }
+  }, [])
+
   const updateQuantity = (id: string, newQuantity: number) => {
-    if (newQuantity < 1) return
-    setCartItems(items =>
-      items.map(item =>
-        item.id === id ? { ...item, quantity: newQuantity } : item
-      )
-    )
+    const updatedItems = updateCartItemQuantity(id, newQuantity)
+    setCartItems(updatedItems)
   }
 
   const removeItem = (id: string) => {
-    setCartItems(items => items.filter(item => item.id !== id))
+    const updatedItems = removeCartItem(id)
+    setCartItems(updatedItems)
     toast({
-      title: "Produit retiré",
-      description: "Le produit a été retiré de votre panier",
+      title: "Produit retire",
+      description: "Le produit a ete retire de votre panier",
     })
   }
 
   const getTotalPrice = () => {
-    return cartItems.reduce((total, item) => total + (item.price * item.quantity), 0)
+    return cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
   }
 
   const handleCheckout = () => {
     toast({
       title: "Commande en cours",
-      description: "Redirection vers le paiement...",
+      description: "Le paiement sera connecte dans la prochaine etape.",
     })
-    // Ici vous pouvez rediriger vers la page de paiement
   }
 
   return (
     <PageTransition className="min-h-screen bg-background">
       <Navbar />
       <UserProfileBanner />
-      
-      <main className="container mx-auto px-4 md:px-6 py-8">
-        <div className="flex items-center gap-4 mb-8">
+
+      <main className="container mx-auto px-4 py-8 md:px-6">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center">
           <BackButton />
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <ShoppingCart className="h-6 w-6" />
             <h1 className="text-3xl font-bold tracking-tight">Mon Panier</h1>
-            <span className="text-muted-foreground">({cartItems.length} article{cartItems.length > 1 ? 's' : ''})</span>
+            <span className="text-muted-foreground">
+              ({cartItems.length} article{cartItems.length > 1 ? "s" : ""})
+            </span>
           </div>
         </div>
 
         {cartItems.length === 0 ? (
           <FadeTransition>
-            <div className="text-center py-12">
-              <ShoppingCart className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
-              <h2 className="text-xl font-semibold mb-2">Votre panier est vide</h2>
-              <p className="text-muted-foreground mb-6">Découvrez nos produits et ajoutez-les à votre panier</p>
-              <Button 
-                onClick={() => router.push('/products')}
+            <div className="py-12 text-center">
+              <ShoppingCart className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+              <h2 className="mb-2 text-xl font-semibold">Votre panier est vide</h2>
+              <p className="mb-6 text-muted-foreground">
+                Decouvrez nos produits et ajoutez-les a votre panier.
+              </p>
+              <Button
+                onClick={() => router.push("/products")}
                 className="transition-all duration-200 hover:scale-105"
               >
-                Découvrir les produits
+                Decouvrir les produits
               </Button>
             </div>
           </FadeTransition>
         ) : (
           <FadeTransition>
             <div className="grid gap-8 lg:grid-cols-3">
-              <div className="lg:col-span-2 space-y-4">
+              <div className="space-y-4 lg:col-span-2">
                 {cartItems.map((item, index) => (
                   <div
                     key={item.id}
                     className="animate-in fade-in-0 slide-in-from-left-4"
-                    style={{
-                      animationDelay: `${index * 100}ms`,
-                      animationFillMode: 'both'
-                    }}
+                    style={{ animationDelay: `${index * 100}ms`, animationFillMode: "both" }}
                   >
-                    <Card className="hover:shadow-md transition-shadow duration-200">
+                    <Card className="transition-shadow duration-200 hover:shadow-md">
                       <CardContent className="p-6">
-                        <div className="flex gap-4">
+                        <div className="flex flex-col gap-4 sm:flex-row">
                           <img
                             src={item.image}
                             alt={item.name}
-                            className="w-20 h-20 object-cover rounded-lg bg-muted transition-transform hover:scale-105"
+                            className="h-24 w-full rounded-xl bg-muted object-cover transition-transform hover:scale-105 sm:h-20 sm:w-20"
                           />
-                          <div className="flex-1">
+
+                          <div className="flex-1 space-y-1">
                             <h3 className="font-semibold">{item.name}</h3>
                             <p className="text-sm text-muted-foreground">{item.shop}</p>
-                            <p className="font-bold text-primary mt-1">
-                              {item.price.toLocaleString()} XAF
-                            </p>
+                            <p className="mt-1 font-bold text-primary">{item.price.toLocaleString()} XAF</p>
                           </div>
-                          <div className="flex items-center gap-2">
+
+                          <div className="flex items-center justify-between gap-3 sm:justify-end">
                             <Button
                               variant="outline"
                               size="icon"
-                              className="h-8 w-8 hover:bg-primary/5 transition-colors"
+                              className="h-8 w-8 transition-colors hover:bg-primary/5"
                               onClick={() => updateQuantity(item.id, item.quantity - 1)}
                             >
                               <Minus className="h-4 w-4" />
@@ -141,7 +132,7 @@ export default function CartPage() {
                             <Button
                               variant="outline"
                               size="icon"
-                              className="h-8 w-8 hover:bg-primary/5 transition-colors"
+                              className="h-8 w-8 transition-colors hover:bg-primary/5"
                               onClick={() => updateQuantity(item.id, item.quantity + 1)}
                             >
                               <Plus className="h-4 w-4" />
@@ -149,7 +140,7 @@ export default function CartPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/5 transition-colors"
+                              className="h-8 w-8 text-destructive transition-colors hover:bg-destructive/5 hover:text-destructive"
                               onClick={() => removeItem(item.id)}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -164,28 +155,30 @@ export default function CartPage() {
 
               <div className="lg:col-span-1">
                 <div className="animate-in fade-in-0 slide-in-from-right-4 animation-delay-200">
-                  <Card className="sticky top-4 hover:shadow-md transition-shadow duration-200">
+                  <Card className="transition-shadow duration-200 hover:shadow-md lg:sticky lg:top-4">
                     <CardHeader>
-                      <CardTitle>Résumé de la commande</CardTitle>
+                      <CardTitle>Resume de la commande</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="space-y-2">
                         {cartItems.map((item) => (
-                          <div key={item.id} className="flex justify-between text-sm">
-                            <span>{item.name} x{item.quantity}</span>
+                          <div key={item.id} className="flex justify-between gap-4 text-sm">
+                            <span className="line-clamp-2">{item.name} x{item.quantity}</span>
                             <span>{(item.price * item.quantity).toLocaleString()} XAF</span>
                           </div>
                         ))}
                       </div>
+
                       <div className="border-t pt-4">
-                        <div className="flex justify-between font-bold text-lg">
+                        <div className="flex justify-between text-lg font-bold">
                           <span>Total</span>
                           <span className="text-primary">{getTotalPrice().toLocaleString()} XAF</span>
                         </div>
                       </div>
-                      <Button 
-                        className="w-full transition-all duration-200 hover:scale-105" 
-                        size="lg" 
+
+                      <Button
+                        className="w-full transition-all duration-200 hover:scale-105"
+                        size="lg"
                         onClick={handleCheckout}
                       >
                         Valider la commande

@@ -12,6 +12,7 @@ import { PageTransition } from "@/components/page-transition"
 import { BackButton } from "@/components/back-button"
 import { useToast } from "@/hooks/use-toast"
 import { apiClient } from "@/lib/api"
+import { AppLogo } from "@/components/app-logo"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -31,7 +32,7 @@ export default function LoginPage() {
 
       toast({
         title: "Connexion réussie",
-        description: `Bienvenue ${authData.user.prenom} !`,
+        description: `Bienvenue ${authData.user?.prenom || "sur Glodist"} !`,
       })
       
       // Redirection vers la page d'origine ou accueil
@@ -56,9 +57,8 @@ export default function LoginPage() {
       
       <Card className="w-full max-w-md hover:shadow-lg transition-shadow duration-300">
         <CardHeader className="space-y-1 text-center">
-          <div className="flex items-center justify-center gap-1 mb-4">
-            <span className="text-2xl font-black tracking-tighter text-secondary">Glo</span>
-            <span className="text-2xl font-black tracking-tighter text-primary">Dist</span>
+          <div className="flex items-center justify-center mb-4">
+            <AppLogo className="max-h-24 w-auto" priority />
           </div>
           <CardTitle className="text-2xl font-bold">Connexion</CardTitle>
           <CardDescription>
@@ -110,6 +110,11 @@ export default function LoginPage() {
                   )}
                 </Button>
               </div>
+            </div>
+            <div className="text-right">
+              <Link href="/forgot-password" className="text-sm text-primary hover:underline font-medium transition-colors">
+                Mot de passe oublié ?
+              </Link>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col space-y-4">

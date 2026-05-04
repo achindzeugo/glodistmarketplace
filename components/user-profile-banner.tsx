@@ -3,10 +3,10 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { AuthManager } from "@/lib/auth"
-import { User } from "@/lib/api"
+import { apiClient, User } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { LogOut, User as UserIcon, Settings, ShoppingBag } from "lucide-react"
+import { LogOut, User as UserIcon, Settings, ShoppingBag, Store } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
   DropdownMenu,
@@ -20,51 +20,91 @@ import {
 export function UserProfileBanner() {
   const [user, setUser] = useState<User | null>(null)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [hasShop, setHasShop] = useState(false)
+  const [showWelcome, setShowWelcome] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
 
   useEffect(() => {
-    const checkAuth = () => {
+    const checkAuth = async () => {
       const authenticated = AuthManager.isAuthenticated()
       const userData = AuthManager.getUser()
       setIsLoggedIn(authenticated)
       setUser(userData)
+
+      if (!authenticated || !userData) {
+        setHasShop(false)
+        return
+      }
+
+      try {
+        const userShopData = await apiClient.getUserShop()
+        setHasShop(!!userShopData.shop?.id)
+      } catch {
+        setHasShop(false)
+      }
     }
 
-    checkAuth()
-    
-    // Écouter les changements d'authentification
-    const interval = setInterval(checkAuth, 1000)
+    void checkAuth()
+    const interval = setInterval(() => {
+      void checkAuth()
+    }, 3000)
+
     return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const originKey = "welcome_banner_origin"
+    const expiryKey = "welcome_banner_expiry"
+    const currentOrigin = String(window.performance.timeOrigin)
+    const storedOrigin = sessionStorage.getItem(originKey)
+    const now = Date.now()
+
+    let expiry = Number(sessionStorage.getItem(expiryKey) || 0)
+
+    if (storedOrigin !== currentOrigin) {
+      expiry = now + 60_000
+      sessionStorage.setItem(originKey, currentOrigin)
+      sessionStorage.setItem(expiryKey, String(expiry))
+    }
+
+    if (expiry <= now) {
+      setShowWelcome(false)
+      return
+    }
+
+    setShowWelcome(true)
+
+    const timeout = window.setTimeout(() => {
+      setShowWelcome(false)
+      sessionStorage.setItem(expiryKey, String(Date.now()))
+    }, expiry - now)
+
+    return () => window.clearTimeout(timeout)
   }, [])
 
   const handleLogout = async () => {
     try {
-      // Appeler la déconnexion via l'API pour supprimer les cookies
       await AuthManager.logout()
-      
-      // Nettoyer l'état local
       setIsLoggedIn(false)
       setUser(null)
-      
-      // Supprimer tous les mécanismes de sauvegarde côté client
-      if (typeof window !== 'undefined') {
-        // Nettoyer le localStorage au cas où il y aurait des données résiduelles
+      setHasShop(false)
+
+      if (typeof window !== "undefined") {
         localStorage.clear()
-        
-        // Nettoyer le sessionStorage
         sessionStorage.clear()
-        
-        // Forcer le rechargement de la page pour s'assurer que tous les états sont réinitialisés
-        window.location.href = '/'
+        window.location.href = "/"
       }
-      
+
       toast({
         title: "Déconnexion réussie",
         description: "Vous avez été déconnecté avec succès. À bientôt !",
       })
-      
-    } catch (error) {
+    } catch {
       toast({
         title: "Erreur de déconnexion",
         description: "Une erreur est survenue lors de la déconnexion",
@@ -80,17 +120,17 @@ export function UserProfileBanner() {
   const getWelcomeMessage = () => {
     const hour = new Date().getHours()
     let greeting = "Bonsoir"
-    
+
     if (hour < 12) {
       greeting = "Bonjour"
     } else if (hour < 18) {
       greeting = "Bon après-midi"
     }
-    
+
     return `${greeting}, ${user?.prenom} !`
   }
 
-  if (!isLoggedIn || !user) {
+  if (!isLoggedIn || !user || !showWelcome) {
     return null
   }
 
@@ -105,17 +145,17 @@ export function UserProfileBanner() {
                 {getInitials(user.prenom, user.nom)}
               </AvatarFallback>
             </Avatar>
-            
+
             <div className="flex flex-col">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-foreground">
                   {getWelcomeMessage()}
                 </span>
-                {user.role === 'Vendeur' && (
+                {hasShop ? (
                   <span className="px-2 py-1 text-xs bg-secondary/20 text-secondary rounded-full font-medium">
                     Vendeur
                   </span>
-                )}
+                ) : null}
               </div>
               <span className="text-sm text-muted-foreground">
                 {user.email}
@@ -124,18 +164,27 @@ export function UserProfileBanner() {
           </div>
 
           <div className="flex items-center gap-2">
-            {user.role === 'Vendeur' && (
-              //user.vente &&
+            {hasShop ? (
               <Button
                 variant="outline"
                 size="sm"
                 className="hidden md:flex items-center gap-2 border-secondary text-secondary hover:bg-secondary/10"
-                onClick={() => router.push('/dashboard')}
+                onClick={() => router.push("/dashboard")}
               >
                 <ShoppingBag className="h-4 w-4" />
                 Ma Boutique
               </Button>
-            )}
+            ) : user.role === "Client" ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="hidden md:flex items-center gap-2 border-secondary text-secondary hover:bg-secondary/10"
+                onClick={() => router.push("/shop-registration")}
+              >
+                <Store className="h-4 w-4" />
+                Devenir vendeur
+              </Button>
+            ) : null}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -152,20 +201,24 @@ export function UserProfileBanner() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => router.push('/profile')}>
+                <DropdownMenuItem onClick={() => router.push("/profile")}>
                   <UserIcon className="mr-2 h-4 w-4" />
                   Mon Profil
                 </DropdownMenuItem>
-                {user.role === 'Vendeur' && (
-                  //user.vente &&
-                  <DropdownMenuItem onClick={() => router.push('/dashboard')}>
+                {hasShop ? (
+                  <DropdownMenuItem onClick={() => router.push("/dashboard")}>
                     <ShoppingBag className="mr-2 h-4 w-4" />
                     Ma Boutique
                   </DropdownMenuItem>
-                )}
+                ) : user.role === "Client" ? (
+                  <DropdownMenuItem onClick={() => router.push("/shop-registration")}>
+                    <Store className="mr-2 h-4 w-4" />
+                    Devenir vendeur
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem 
-                  className="text-destructive focus:text-destructive" 
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
                   onClick={handleLogout}
                 >
                   <LogOut className="mr-2 h-4 w-4" />

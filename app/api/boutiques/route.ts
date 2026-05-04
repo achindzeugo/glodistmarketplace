@@ -1,67 +1,134 @@
-import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
+import { NextRequest, NextResponse } from "next/server"
+import { isTokenError, refreshAccessToken, setAccessTokenCookie } from "@/lib/server-auth"
+import { normalizeShop, normalizeShopListResponse } from "@/lib/shop-normalizer"
+import { extractApiErrorMessage } from "@/lib/user-normalizer"
 
-const BASE_URL = "https://glodistapi.onrender.com/api/auth/boutiques/"
+const API_BASE_URL = "https://glodistapi.onrender.com/api/v1"
 
-export async function POST(request: Request) {
+async function readJsonSafely(response: Response) {
+  const text = await response.text()
+
+  if (!text) {
+    return null
+  }
+
   try {
-    const body = await request.json()
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
 
-    // Forward relevant incoming headers (Authorization and cookies) to the API
-    const forwardedHeaders: Record<string, string> = {
-      "Content-Type": "application/json",
+export async function GET() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/shops/`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    })
+
+    const data = await readJsonSafely(response)
+
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          error: extractApiErrorMessage(data, "Erreur lors du chargement des boutiques"),
+        },
+        { status: response.status }
+      )
     }
 
-    const auth = request.headers.get("authorization")
-    const cookie = request.headers.get("cookie")
-    if (auth) forwardedHeaders["authorization"] = auth
-    if (cookie) forwardedHeaders["cookie"] = cookie
-    // If no Authorization header but an auth_token cookie exists, set Authorization
-    if (!auth && cookie) {
-      const m = cookie.match(/(?:^|;\s*)auth_token=([^;]+)/)
-      if (m && m[1]) {
-        try {
-          const token = decodeURIComponent(m[1])
-          forwardedHeaders["authorization"] = `Bearer ${token}`
-        } catch (e) {
-          forwardedHeaders["authorization"] = `Bearer ${m[1]}`
+    return NextResponse.json(normalizeShopListResponse(data))
+  } catch (error) {
+    console.error("Erreur lors du chargement des boutiques:", error)
+    return NextResponse.json(
+      { error: "Erreur interne du serveur" },
+      { status: 500 }
+    )
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const cookieStore = await cookies()
+    let authToken = cookieStore.get("auth_token")?.value
+    const refreshToken = cookieStore.get("refresh_token")?.value
+
+    if (!authToken && refreshToken) {
+      authToken = await refreshAccessToken(refreshToken)
+    }
+
+    if (!authToken) {
+      return NextResponse.json(
+        { error: "Vous devez etre connecte pour creer une boutique." },
+        { status: 401 }
+      )
+    }
+
+    const body = await request.json()
+    const payload = {
+      name: body?.name || body?.nom || "",
+      description: body?.description || "",
+    }
+
+    const sendCreateRequest = async (token: string) => {
+      const response = await fetch(`${API_BASE_URL}/auth/shops/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      })
+
+      const data = await readJsonSafely(response)
+      return { response, data }
+    }
+
+    let { response, data } = await sendCreateRequest(authToken)
+
+    if (!response.ok && refreshToken && isTokenError(response.status, data)) {
+      const refreshedAccessToken = await refreshAccessToken(refreshToken)
+
+      if (refreshedAccessToken) {
+        authToken = refreshedAccessToken
+        const retryResult = await sendCreateRequest(refreshedAccessToken)
+        response = retryResult.response
+        data = retryResult.data
+
+        if (response.ok) {
+          const nextResponse = NextResponse.json(normalizeShop(data), { status: response.status })
+          setAccessTokenCookie(nextResponse, refreshedAccessToken)
+          return nextResponse
         }
       }
     }
 
-    const res = await fetch(BASE_URL, {
-      method: "POST",
-      headers: forwardedHeaders,
-      body: JSON.stringify(body),
-    })
-
-    const text = await res.text()
-    let data: any = null
-    try {
-      data = text ? JSON.parse(text) : null
-    } catch (err) {
-      data = text
-    }
-
-    if (!res.ok) {
-      // Return diagnostic information to help debug 401/403/CORS from upstream
-      const diagnostics = {
-        proxied_status: res.status,
-        proxied_url: BASE_URL,
-        proxied_headers: {
-          "www-authenticate": res.headers.get("www-authenticate"),
-          "access-control-allow-credentials": res.headers.get("access-control-allow-credentials"),
-          "access-control-allow-origin": res.headers.get("access-control-allow-origin"),
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          error: extractApiErrorMessage(data, "Impossible de creer la boutique"),
+          details: data,
         },
-        forwarded_headers: forwardedHeaders,
-        proxied_body: data,
-        original_body: body,
-      }
-
-      return NextResponse.json(diagnostics, { status: res.status })
+        { status: response.status }
+      )
     }
 
-    return NextResponse.json(data, { status: res.status })
-  } catch (e) {
-    return NextResponse.json({ detail: "Erreur proxy" }, { status: 500 })
+    const nextResponse = NextResponse.json(normalizeShop(data), { status: response.status })
+
+    if (refreshToken && authToken !== cookieStore.get("auth_token")?.value) {
+      setAccessTokenCookie(nextResponse, authToken)
+    }
+
+    return nextResponse
+  } catch (error) {
+    console.error("Erreur lors de la creation de la boutique:", error)
+    return NextResponse.json(
+      { error: "Erreur interne du serveur" },
+      { status: 500 }
+    )
   }
 }

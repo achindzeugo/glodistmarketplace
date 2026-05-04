@@ -14,6 +14,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { FileUpload } from "@/components/file-upload"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { AuthManager, User } from "@/lib/auth"
 import { apiClient } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -37,13 +45,10 @@ import {
   FileText,
   CheckCircle,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  LockKeyhole
 } from "lucide-react"
-import { Heart, Settings, ShieldCheck, MapPin, Download } from "lucide-react"
-import Link from "next/link"
-
 export default function ProfilePage() {
-  const [activeTab, setActiveTab] = useState<string>("profile")
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
@@ -56,6 +61,13 @@ export default function ProfilePage() {
   const [documentType, setDocumentType] = useState<string>("")
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
   const [verificationStatus, setVerificationStatus] = useState<'none' | 'pending' | 'verified' | 'rejected'>('none')
+  const [passwordForm, setPasswordForm] = useState({
+    oldPassword: "",
+    newPassword: "",
+    confirmPassword: ""
+  })
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false)
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
 
@@ -150,6 +162,21 @@ export default function ProfilePage() {
     }))
   }
 
+  const handlePasswordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPasswordForm(prev => ({
+      ...prev,
+      [e.target.name]: e.target.value
+    }))
+  }
+
+  const resetPasswordForm = () => {
+    setPasswordForm({
+      oldPassword: "",
+      newPassword: "",
+      confirmPassword: ""
+    })
+  }
+
   const handleSave = async () => {
     try {
       setLoading(true)
@@ -221,6 +248,59 @@ export default function ProfilePage() {
     }
   }
 
+  const handlePasswordChange = async () => {
+    if (!passwordForm.oldPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      toast({
+        title: "Champs manquants",
+        description: "Veuillez remplir tous les champs du mot de passe",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast({
+        title: "Confirmation invalide",
+        description: "Les nouveaux mots de passe ne correspondent pas",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (passwordForm.newPassword.length < 6) {
+      toast({
+        title: "Mot de passe trop court",
+        description: "Le nouveau mot de passe doit contenir au moins 6 caractères",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setIsChangingPassword(true)
+      await apiClient.changePassword({
+        old_password: passwordForm.oldPassword,
+        new_password: passwordForm.newPassword,
+      })
+
+      resetPasswordForm()
+      setIsPasswordDialogOpen(false)
+
+      toast({
+        title: "Mot de passe modifié",
+        description: "Votre mot de passe a été mis à jour avec succès",
+      })
+    } catch (error) {
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible de changer le mot de passe",
+        variant: "destructive",
+      })
+    } finally {
+      setIsChangingPassword(false)
+    }
+  }
+
   if (loading) {
     return (
       <PageTransition className="min-h-screen bg-background">
@@ -256,10 +336,10 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-4">
+        <div className="grid gap-6 lg:grid-cols-3">
           {/* Carte de profil principal */}
           <FadeTransition>
-            <Card className="md:col-span-1 hover:shadow-md transition-shadow duration-200">
+            <Card className="lg:col-span-2 hover:shadow-md transition-shadow duration-200">
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
@@ -396,7 +476,7 @@ export default function ProfilePage() {
           </FadeTransition>
 
           {/* Carte d'informations supplémentaires */}
-          <div className="md:col-span-3 space-y-6">
+          <div className="lg:col-span-1 space-y-6">
             <FadeTransition className="animation-delay-200">
               <Card className="hover:shadow-md transition-shadow duration-200">
                 <CardHeader>
@@ -456,6 +536,31 @@ export default function ProfilePage() {
                 </Card>
               </FadeTransition>
             )}
+
+            <FadeTransition className="animation-delay-400">
+              <Card className="hover:shadow-md transition-shadow duration-200">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <LockKeyhole className="h-5 w-5" />
+                    Sécurité du compte
+                  </CardTitle>
+                  <CardDescription>
+                    Changez votre mot de passe en fournissant votre mot de passe actuel
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Pour des raisons de sécurité, la modification du mot de passe s'effectue dans une fenêtre dédiée.
+                  </p>
+                  <Button
+                    className="w-full"
+                    onClick={() => setIsPasswordDialogOpen(true)}
+                  >
+                    Changer mon mot de passe
+                  </Button>
+                </CardContent>
+              </Card>
+            </FadeTransition>
 
             <FadeTransition className="animation-delay-400">
               <Card className="hover:shadow-md transition-shadow duration-200">
@@ -610,6 +715,81 @@ export default function ProfilePage() {
           </div>
         </div>
       </main>
+
+      <Dialog
+        open={isPasswordDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !isChangingPassword) {
+            resetPasswordForm()
+          }
+          setIsPasswordDialogOpen(open)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Changer le mot de passe</DialogTitle>
+            <DialogDescription>
+              Saisissez votre mot de passe actuel, puis choisissez un nouveau mot de passe.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="oldPassword">Mot de passe actuel</Label>
+              <Input
+                id="oldPassword"
+                name="oldPassword"
+                type="password"
+                value={passwordForm.oldPassword}
+                onChange={handlePasswordInputChange}
+                placeholder="Ancien mot de passe"
+                disabled={isChangingPassword}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">Nouveau mot de passe</Label>
+              <Input
+                id="newPassword"
+                name="newPassword"
+                type="password"
+                value={passwordForm.newPassword}
+                onChange={handlePasswordInputChange}
+                placeholder="Nouveau mot de passe"
+                disabled={isChangingPassword}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmNewPassword">Confirmer le nouveau mot de passe</Label>
+              <Input
+                id="confirmNewPassword"
+                name="confirmPassword"
+                type="password"
+                value={passwordForm.confirmPassword}
+                onChange={handlePasswordInputChange}
+                placeholder="Répétez le nouveau mot de passe"
+                disabled={isChangingPassword}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                resetPasswordForm()
+                setIsPasswordDialogOpen(false)
+              }}
+              disabled={isChangingPassword}
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={handlePasswordChange}
+              disabled={isChangingPassword}
+            >
+              {isChangingPassword ? "Mise à jour..." : "Enregistrer"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageTransition>
   )
 }

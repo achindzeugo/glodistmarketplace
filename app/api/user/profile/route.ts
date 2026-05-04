@@ -1,7 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
+import { extractApiErrorMessage, normalizeUser } from '@/lib/user-normalizer'
 
-const API_BASE_URL = 'https://glodistapi.onrender.com/api'
+const API_BASE_URL = 'https://glodistapi.onrender.com/api/v1'
+
+function mapRoleToApi(role: string | undefined) {
+  switch ((role || '').toLowerCase()) {
+    case 'vendeur':
+    case 'seller':
+      return 'seller'
+    case 'admin':
+      return 'admin'
+    case 'client':
+    default:
+      return 'client'
+  }
+}
+
+function mapStatusToApi(status: string | undefined) {
+  switch ((status || '').toLowerCase()) {
+    case 'actif':
+    case 'active':
+      return 'active'
+    case 'pending':
+    case 'en attente':
+      return 'pending'
+    case 'inactive':
+    case 'inactif':
+      return 'inactive'
+    case 'suspended':
+    case 'suspendu':
+      return 'suspended'
+    default:
+      return 'active'
+  }
+}
+
+async function fetchRemoteProfile(authToken: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/profile/`, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    }
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null)
+    throw new Error(extractApiErrorMessage(error, 'Erreur lors de la récupération du profil'))
+  }
+
+  return response.json()
+}
 
 export async function GET() {
   try {
@@ -15,29 +66,13 @@ export async function GET() {
       )
     }
 
-    // Appel à l'API pour récupérer le profil utilisateur
-    const response = await fetch(`${API_BASE_URL}/user/profile/`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      }
-    })
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: 'Erreur lors de la récupération du profil' },
-        { status: response.status }
-      )
-    }
-
-    const profileData = await response.json()
-    return NextResponse.json(profileData)
+    const profileData = await fetchRemoteProfile(authToken)
+    return NextResponse.json(normalizeUser(profileData))
 
   } catch (error) {
     console.error('Erreur lors de la récupération du profil:', error)
     return NextResponse.json(
-      { error: 'Erreur interne du serveur' },
+      { error: error instanceof Error ? error.message : 'Erreur interne du serveur' },
       { status: 500 }
     )
   }
@@ -56,34 +91,51 @@ export async function PUT(request: NextRequest) {
     }
 
     const updateData = await request.json()
+    const currentProfile = await fetchRemoteProfile(authToken)
 
-    // Appel à l'API pour mettre à jour le profil
-    const response = await fetch(`${API_BASE_URL}/user/profile/`, {
+    const payload = {
+      username: updateData.username || currentProfile.username,
+      email: updateData.email || currentProfile.email,
+      first_name: updateData.first_name || updateData.prenom || currentProfile.first_name || '',
+      last_name: updateData.last_name || updateData.nom || currentProfile.last_name || '',
+      phone: updateData.phone || updateData.telephone || currentProfile.phone || '',
+      role: mapRoleToApi(updateData.role || currentProfile.role),
+      account_status: mapStatusToApi(updateData.account_status || updateData.statut_compte || currentProfile.account_status),
+      can_sell: typeof updateData.can_sell === 'boolean'
+        ? updateData.can_sell
+        : typeof updateData.vente === 'boolean'
+        ? updateData.vente
+        : !!currentProfile.can_sell,
+      ...(updateData.password ? { password: updateData.password } : {}),
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/profile/`, {
       method: 'PUT',
       headers: {
+        'Accept': 'application/json',
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authToken}`
       },
-      body: JSON.stringify(updateData)
+      body: JSON.stringify(payload)
     })
 
     if (!response.ok) {
-      const error = await response.json()
+      const error = await response.json().catch(() => null)
       return NextResponse.json(
-        { error: error.detail || 'Erreur lors de la mise à jour du profil' },
+        { error: extractApiErrorMessage(error, 'Erreur lors de la mise à jour du profil') },
         { status: response.status }
       )
     }
 
     const updatedProfile = await response.json()
-    
-    // Mettre à jour le cookie user_data avec les nouvelles informations
-    const nextResponse = NextResponse.json(updatedProfile)
-    nextResponse.cookies.set('user_data', JSON.stringify(updatedProfile), {
+    const normalizedUser = normalizeUser(updatedProfile)
+
+    const nextResponse = NextResponse.json(normalizedUser)
+    nextResponse.cookies.set('user_data', JSON.stringify(normalizedUser), {
       httpOnly: false,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 7, // 7 jours
+      maxAge: 60 * 60 * 24 * 7,
       path: '/'
     })
 
@@ -92,7 +144,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('Erreur lors de la mise à jour du profil:', error)
     return NextResponse.json(
-      { error: 'Erreur interne du serveur' },
+      { error: error instanceof Error ? error.message : 'Erreur interne du serveur' },
       { status: 500 }
     )
   }

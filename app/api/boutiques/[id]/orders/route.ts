@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
-import { normalizeShopListResponse } from "@/lib/shop-normalizer"
+import { NextResponse } from "next/server"
 import { extractApiErrorMessage } from "@/lib/user-normalizer"
+import { normalizeShopOrdersResponse } from "@/lib/shop-normalizer"
 
 const API_BASE_URL = "https://glodistapi.onrender.com/api/v1"
 
@@ -19,19 +19,23 @@ async function readJsonSafely(response: Response) {
   }
 }
 
-export async function GET() {
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
   try {
     const cookieStore = await cookies()
     const authToken = cookieStore.get("auth_token")?.value
 
     if (!authToken) {
       return NextResponse.json(
-        { error: "Token d'authentification manquant" },
+        { error: "Vous devez etre connecte pour consulter les commandes." },
         { status: 401 }
       )
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/shops/`, {
+    const { id } = await params
+    const response = await fetch(`${API_BASE_URL}/shops/${id}/orders/`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -43,31 +47,17 @@ export async function GET() {
     const data = await readJsonSafely(response)
 
     if (!response.ok) {
-      if (response.status === 404) {
-        return NextResponse.json({ shop: null, shops: [] })
-      }
-
       return NextResponse.json(
         {
-          error: extractApiErrorMessage(data, "Erreur lors de la recuperation de la boutique"),
+          error: extractApiErrorMessage(data, "Impossible de charger les commandes de la boutique"),
         },
         { status: response.status }
       )
     }
 
-    const normalized = normalizeShopListResponse(data)
-
-    return NextResponse.json({
-      shop: normalized.results[0] ?? null,
-      shops: normalized.results,
-      pagination: {
-        count: normalized.count,
-        next: normalized.next,
-        previous: normalized.previous,
-      },
-    })
+    return NextResponse.json(normalizeShopOrdersResponse(data))
   } catch (error) {
-    console.error("Erreur lors de la recuperation de la boutique:", error)
+    console.error("Erreur lors du chargement des commandes de la boutique:", error)
     return NextResponse.json(
       { error: "Erreur interne du serveur" },
       { status: 500 }
