@@ -1,155 +1,196 @@
 "use client"
 
-import { Checkbox } from "@/components/ui/checkbox"
-import { Button } from "@/components/ui/button"
-import { Trash2, Plus, Minus, Store, ShieldCheck, ArrowLeft } from "lucide-react"
-import Image from "next/image"
-import Link from "next/link"
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { Minus, Plus, ShoppingCart, Trash2 } from "lucide-react"
 import { Navbar } from "@/components/navbar"
-
-const cartItems = [
-  {
-    shopId: "shop-1",
-    shopName: "Douala Tech Hub",
-    isVerified: true,
-    items: [
-      { id: 1, name: "iPhone 15 Pro", price: 850000, quantity: 1, image: "/modern-smartphone.png" },
-      { id: 2, name: "AirPods Pro", price: 150000, quantity: 2, image: "/wireless-earbuds-charging-case.png" },
-    ],
-  },
-  {
-    shopId: "shop-2",
-    shopName: "Yaoundé Fashion",
-    isVerified: false,
-    items: [{ id: 3, name: "Chaussures Sport", price: 45000, quantity: 1, image: "/assorted-shoes.png" }],
-  },
-]
+import { UserProfileBanner } from "@/components/user-profile-banner"
+import { PageTransition, FadeTransition } from "@/components/page-transition"
+import { BackButton } from "@/components/back-button"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useToast } from "@/hooks/use-toast"
+import {
+  CART_UPDATED_EVENT,
+  CartItem,
+  getCartItems,
+  removeCartItem,
+  updateCartItemQuantity,
+} from "@/lib/cart"
 
 export default function CartPage() {
-  const total = cartItems.reduce(
-    (acc, shop) => acc + shop.items.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    0,
-  )
+  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const router = useRouter()
+  const { toast } = useToast()
+
+  useEffect(() => {
+    const syncCart = () => {
+      setCartItems(getCartItems())
+    }
+
+    syncCart()
+    window.addEventListener(CART_UPDATED_EVENT, syncCart)
+
+    return () => {
+      window.removeEventListener(CART_UPDATED_EVENT, syncCart)
+    }
+  }, [])
+
+  const updateQuantity = (id: string, newQuantity: number) => {
+    const updatedItems = updateCartItemQuantity(id, newQuantity)
+    setCartItems(updatedItems)
+  }
+
+  const removeItem = (id: string) => {
+    const updatedItems = removeCartItem(id)
+    setCartItems(updatedItems)
+    toast({
+      title: "Produit retire",
+      description: "Le produit a ete retire de votre panier",
+    })
+  }
+
+  const getTotalPrice = () => {
+    return cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
+  }
+
+  const handleCheckout = () => {
+    toast({
+      title: "Commande en cours",
+      description: "Le paiement sera connecte dans la prochaine etape.",
+    })
+  }
 
   return (
-    <div className="min-h-screen bg-background">
+    <PageTransition className="min-h-screen bg-background">
       <Navbar />
-      <div className="container mx-auto px-4 py-10 md:px-6">
-        <div className="flex items-center gap-4 mb-8">
-          <Link href="/">
-            <Button variant="ghost" size="icon" className="rounded-full">
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-          </Link>
-          <h1 className="text-3xl font-black tracking-tight text-primary">Votre Panier</h1>
+      <UserProfileBanner />
+
+      <main className="container mx-auto px-4 py-8 md:px-6">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center">
+          <BackButton />
+          <div className="flex flex-wrap items-center gap-2">
+            <ShoppingCart className="h-6 w-6" />
+            <h1 className="text-3xl font-bold tracking-tight">Mon Panier</h1>
+            <span className="text-muted-foreground">
+              ({cartItems.length} article{cartItems.length > 1 ? "s" : ""})
+            </span>
+          </div>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-3">
-          <div className="lg:col-span-2 space-y-6">
-            {cartItems.map((shop) => (
-              <div key={shop.shopId} className="rounded-2xl border border-primary/10 bg-card overflow-hidden shadow-sm">
-                <div className="bg-primary/5 px-4 py-4 flex items-center justify-between border-b border-primary/10">
-                  <div className="flex items-center space-x-3">
-                    <Checkbox
-                      id={`shop-${shop.shopId}`}
-                      className="border-primary/30 data-[state=checked]:bg-primary"
-                    />
-                    <div className="flex items-center space-x-2">
-                      <Store className="h-5 w-5 text-primary" />
-                      <span className="font-black text-sm uppercase tracking-tighter text-primary">
-                        {shop.shopName}
-                      </span>
-                      {shop.isVerified && <ShieldCheck className="h-4 w-4 text-secondary fill-secondary" />}
-                    </div>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-[10px] h-7 bg-white/50 border border-primary/10 text-primary font-bold hover:bg-primary/10 uppercase tracking-widest"
+        {cartItems.length === 0 ? (
+          <FadeTransition>
+            <div className="py-12 text-center">
+              <ShoppingCart className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+              <h2 className="mb-2 text-xl font-semibold">Votre panier est vide</h2>
+              <p className="mb-6 text-muted-foreground">
+                Decouvrez nos produits et ajoutez-les a votre panier.
+              </p>
+              <Button
+                onClick={() => router.push("/products")}
+                className="transition-all duration-200 hover:scale-105"
+              >
+                Decouvrir les produits
+              </Button>
+            </div>
+          </FadeTransition>
+        ) : (
+          <FadeTransition>
+            <div className="grid gap-8 lg:grid-cols-3">
+              <div className="space-y-4 lg:col-span-2">
+                {cartItems.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className="animate-in fade-in-0 slide-in-from-left-4"
+                    style={{ animationDelay: `${index * 100}ms`, animationFillMode: "both" }}
                   >
-                    Commander cette boutique uniquement
-                  </Button>
-                </div>
+                    <Card className="transition-shadow duration-200 hover:shadow-md">
+                      <CardContent className="p-6">
+                        <div className="flex flex-col gap-4 sm:flex-row">
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="h-24 w-full rounded-xl bg-muted object-cover transition-transform hover:scale-105 sm:h-20 sm:w-20"
+                          />
 
-                <div className="divide-y divide-primary/5">
-                  {shop.items.map((item) => (
-                    <div key={item.id} className="p-5 flex items-center gap-4 hover:bg-muted/30 transition-colors">
-                      <Checkbox className="border-primary/30 data-[state=checked]:bg-primary" />
-                      <div className="relative h-24 w-24 flex-shrink-0 rounded-xl overflow-hidden bg-muted border border-primary/5">
-                        <Image src={item.image || "/placeholder.svg"} alt={item.name} fill className="object-cover" />
+                          <div className="flex-1 space-y-1">
+                            <h3 className="font-semibold">{item.name}</h3>
+                            <p className="text-sm text-muted-foreground">{item.shop}</p>
+                            <p className="mt-1 font-bold text-primary">{item.price.toLocaleString()} XAF</p>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 sm:justify-end">
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 transition-colors hover:bg-primary/5"
+                              onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                            >
+                              <Minus className="h-4 w-4" />
+                            </Button>
+                            <span className="w-8 text-center font-medium">{item.quantity}</span>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 transition-colors hover:bg-primary/5"
+                              onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive transition-colors hover:bg-destructive/5 hover:text-destructive"
+                              onClick={() => removeItem(item.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ))}
+              </div>
+
+              <div className="lg:col-span-1">
+                <div className="animate-in fade-in-0 slide-in-from-right-4 animation-delay-200">
+                  <Card className="transition-shadow duration-200 hover:shadow-md lg:sticky lg:top-4">
+                    <CardHeader>
+                      <CardTitle>Resume de la commande</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        {cartItems.map((item) => (
+                          <div key={item.id} className="flex justify-between gap-4 text-sm">
+                            <span className="line-clamp-2">{item.name} x{item.quantity}</span>
+                            <span>{(item.price * item.quantity).toLocaleString()} XAF</span>
+                          </div>
+                        ))}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-base sm:text-lg text-primary">{item.name}</h3>
-                        <p className="text-secondary font-black mt-1 text-lg">{item.price.toLocaleString()} XAF</p>
-                      </div>
-                      <div className="flex flex-col items-end justify-between self-stretch">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/5"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <div className="flex items-center border border-primary/20 rounded-lg bg-background overflow-hidden">
-                          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-none hover:bg-primary/5">
-                            <Minus className="h-4 w-4" />
-                          </Button>
-                          <span className="w-10 text-center text-sm font-bold text-primary">{item.quantity}</span>
-                          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-none hover:bg-primary/5">
-                            <Plus className="h-4 w-4" />
-                          </Button>
+
+                      <div className="border-t pt-4">
+                        <div className="flex justify-between text-lg font-bold">
+                          <span>Total</span>
+                          <span className="text-primary">{getTotalPrice().toLocaleString()} XAF</span>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
 
-          <div className="lg:col-span-1">
-            <div className="sticky top-24 rounded-2xl border-2 border-primary/10 bg-card/80 backdrop-blur-xl p-8 shadow-xl shadow-primary/5">
-              <h2 className="text-2xl font-black mb-6 text-primary tracking-tight">Résumé</h2>
-              <div className="space-y-4">
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-muted-foreground">Articles (4)</span>
-                  <span className="text-primary">{total.toLocaleString()} XAF</span>
-                </div>
-                <div className="flex justify-between text-sm font-medium">
-                  <span className="text-muted-foreground">Livraison estimée</span>
-                  <span className="text-secondary font-black">À calculer</span>
-                </div>
-                <div className="border-t-2 border-dashed border-primary/10 pt-6 flex justify-between items-end">
-                  <span className="text-sm font-bold text-muted-foreground uppercase tracking-wider">Total</span>
-                  <span className="text-3xl font-black text-primary tracking-tighter">
-                    {total.toLocaleString()} XAF
-                  </span>
-                </div>
-                <Button className="w-full bg-primary text-primary-foreground py-8 text-xl font-black uppercase tracking-tighter shadow-2xl shadow-primary/30 hover:bg-primary/90 mt-4 rounded-xl">
-                  Valider le paiement
-                </Button>
-
-                <div className="mt-8 space-y-3">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest text-center mb-4">
-                    Paiements acceptés
-                  </p>
-                  <div className="flex items-center justify-center gap-4 opacity-50 grayscale hover:grayscale-0 transition-all">
-                    <div className="h-8 w-12 bg-muted rounded flex items-center justify-center font-bold text-[10px]">
-                      MTN
-                    </div>
-                    <div className="h-8 w-12 bg-muted rounded flex items-center justify-center font-bold text-[10px]">
-                      ORANGE
-                    </div>
-                    <div className="h-8 w-12 bg-muted rounded flex items-center justify-center font-bold text-[10px]">
-                      VISA
-                    </div>
-                  </div>
+                      <Button
+                        className="w-full transition-all duration-200 hover:scale-105"
+                        size="lg"
+                        onClick={handleCheckout}
+                      >
+                        Valider la commande
+                      </Button>
+                    </CardContent>
+                  </Card>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
+          </FadeTransition>
+        )}
+      </main>
+    </PageTransition>
   )
 }
