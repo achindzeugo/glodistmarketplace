@@ -9,12 +9,14 @@ import {
   LayoutDashboard,
   Loader2,
   Package,
+  PanelLeft,
   Plus,
   Settings,
   ShoppingBag,
   Store,
   TrendingUp,
   Users,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,8 +33,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { AuthManager } from "@/lib/auth"
 import { apiClient, ShopOrder, ShopStats } from "@/lib/api"
+import { extractApiErrorMessage, getUserFriendlyErrorMessage, isAuthenticationIssue } from "@/lib/error-utils"
 import { useToast } from "@/hooks/use-toast"
 
 type Boutique = {
@@ -129,6 +133,7 @@ export default function ShopDashboard() {
     stock: "",
     categorie: "",
   })
+  const [imageUrls, setImageUrls] = useState<string[]>([""])
   const [editProductForm, setEditProductForm] = useState({
     nom: "",
     prix: "",
@@ -144,29 +149,19 @@ export default function ShopDashboard() {
       }
 
       try {
-        const categoryResponse = await fetch("/api/products/categories")
-        if (!categoryResponse.ok) {
-          throw new Error(`Impossible de charger les categories (${categoryResponse.statusText})`)
-        }
-
-        const categoryData = await categoryResponse.json()
+        const categoryData = await apiClient.getCategories()
         setCategories(categoryData.results || [])
-      } catch (error: any) {
+      } catch (error) {
         console.error(error)
         toast({
           title: "Erreur categories",
-          description: error.message || "Impossible de charger les categories de produits.",
+          description: getUserFriendlyErrorMessage(error, "Impossible de charger les categories de produits."),
           variant: "destructive",
         })
       }
 
       try {
-        const shopResponse = await fetch("/api/user/shop", { credentials: "include" })
-        if (!shopResponse.ok) {
-          throw new Error("Boutique non trouvee.")
-        }
-
-        const shopData = await shopResponse.json()
+        const shopData = await apiClient.getUserShop()
 
         if (shopData.shop?.id) {
           setShop(shopData.shop)
@@ -179,6 +174,22 @@ export default function ShopDashboard() {
         }
       } catch (error) {
         console.error(error)
+        const errorMessage = getUserFriendlyErrorMessage(
+          error,
+          "Impossible de charger les informations de votre boutique."
+        )
+
+        toast({
+          title: "Acces a la boutique",
+          description: errorMessage,
+          variant: "destructive",
+        })
+
+        if (isAuthenticationIssue(error)) {
+          router.push("/login")
+          return
+        }
+
         router.push("/")
       }
     }
@@ -200,16 +211,18 @@ export default function ShopDashboard() {
         })
 
         if (!response.ok) {
-          throw new Error(`Impossible de charger les produits (${response.statusText})`)
+          throw new Error(
+            await extractApiErrorMessage(response, "Impossible de charger vos produits.")
+          )
         }
 
         const data = await response.json()
         setProducts(data || [])
-      } catch (error: any) {
+      } catch (error) {
         console.error(error)
         toast({
           title: "Erreur produits",
-          description: error.message || "Impossible de charger vos produits.",
+          description: getUserFriendlyErrorMessage(error, "Impossible de charger vos produits."),
           variant: "destructive",
         })
       } finally {
@@ -237,11 +250,11 @@ export default function ShopDashboard() {
 
         setShopStats(statsResponse)
         setOrders(ordersResponse.orders || [])
-      } catch (error: any) {
+      } catch (error) {
         console.error(error)
         toast({
           title: "Erreur boutique",
-          description: error.message || "Impossible de charger les statistiques de la boutique.",
+          description: getUserFriendlyErrorMessage(error, "Impossible de charger les statistiques de la boutique."),
           variant: "destructive",
         })
       } finally {
@@ -258,6 +271,26 @@ export default function ShopDashboard() {
   ) => {
     const { id, value } = e.target
     setNewProduct((prev) => ({ ...prev, [id]: value }))
+  }
+
+  const handleImageUrlChange = (index: number, value: string) => {
+    setImageUrls((prev) => prev.map((url, currentIndex) => (
+      currentIndex === index ? value : url
+    )))
+  }
+
+  const handleAddImageField = () => {
+    setImageUrls((prev) => [...prev, ""])
+  }
+
+  const handleRemoveImageField = (index: number) => {
+    setImageUrls((prev) => {
+      if (prev.length === 1) {
+        return [""]
+      }
+
+      return prev.filter((_, currentIndex) => currentIndex !== index)
+    })
   }
 
   const handleProductSubmit = async () => {
@@ -282,6 +315,10 @@ export default function ShopDashboard() {
     setIsSubmitting(true)
 
     try {
+      const validImageUrls = imageUrls
+        .map((url) => url.trim())
+        .filter((url) => url.length > 0)
+
       const payload = {
         nom: newProduct.nom,
         description: newProduct.description,
@@ -300,30 +337,45 @@ export default function ShopDashboard() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        const specificError =
-          errorData.details?.name?.[0] ||
-          errorData.details?.nom?.[0] ||
-          errorData.error ||
-          "Une erreur est survenue."
-
-        throw new Error(specificError)
+        throw new Error(
+          await extractApiErrorMessage(response, "Impossible d'ajouter le produit.")
+        )
       }
 
       const createdProduct = await response.json()
+      const createdMedias = []
+      let failedMediaCount = 0
+
+      for (const url of validImageUrls) {
+        try {
+          const media = await apiClient.addProductMedia(String(createdProduct.id), { url })
+          createdMedias.push(media)
+        } catch (mediaError) {
+          failedMediaCount += 1
+        }
+      }
+
+      const productWithMedias = {
+        ...createdProduct,
+        medias: createdMedias.length > 0 ? createdMedias : createdProduct.medias || [],
+      }
 
       toast({
         title: "Produit ajoute",
-        description: `'${newProduct.nom}' a ete ajoute avec succes a votre boutique.`,
+        description:
+          failedMediaCount > 0
+            ? `'${newProduct.nom}' a ete ajoute, mais ${failedMediaCount} image(s) n'ont pas pu etre associees.`
+            : `'${newProduct.nom}' a ete ajoute avec succes a votre boutique.`,
       })
 
       setNewProduct({ nom: "", description: "", prix: "", stock: "", categorie: "" })
+      setImageUrls([""])
       setShowAddProduct(false)
-      setProducts((prevProducts) => [createdProduct, ...prevProducts])
-    } catch (error: any) {
+      setProducts((prevProducts) => [productWithMedias, ...prevProducts])
+    } catch (error) {
       toast({
         title: "Erreur lors de l'ajout",
-        description: error.message,
+        description: getUserFriendlyErrorMessage(error, "Impossible d'ajouter le produit."),
         variant: "destructive",
       })
     } finally {
@@ -375,10 +427,10 @@ export default function ShopDashboard() {
       })
 
       setEditingProduct(null)
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Erreur de mise a jour",
-        description: error.message || "Impossible de modifier le produit.",
+        description: getUserFriendlyErrorMessage(error, "Impossible de modifier le produit."),
         variant: "destructive",
       })
     } finally {
@@ -405,10 +457,10 @@ export default function ShopDashboard() {
       })
 
       setEditingProduct(null)
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Erreur de suppression",
-        description: error.message || "Impossible de supprimer le produit.",
+        description: getUserFriendlyErrorMessage(error, "Impossible de supprimer le produit."),
         variant: "destructive",
       })
     } finally {
@@ -463,6 +515,13 @@ export default function ShopDashboard() {
     },
   ]
 
+  const navigationItems = [
+    { id: "overview", label: "Tableau de bord", icon: LayoutDashboard },
+    { id: "products", label: "Mes Produits", icon: Package },
+    { id: "orders", label: "Commandes Client", icon: ShoppingBag },
+    { id: "customers", label: "Clients", icon: Users },
+  ]
+
   return (
     <div className="flex min-h-screen bg-muted/20">
       <aside className="hidden w-64 border-r bg-card md:block">
@@ -487,12 +546,7 @@ export default function ShopDashboard() {
           </div>
 
           <nav className="space-y-1">
-            {[
-              { id: "overview", label: "Tableau de bord", icon: LayoutDashboard },
-              { id: "products", label: "Mes Produits", icon: Package },
-              { id: "orders", label: "Commandes Client", icon: ShoppingBag },
-              { id: "customers", label: "Clients", icon: Users },
-            ].map((item) => (
+            {navigationItems.map((item) => (
               <Button
                 key={item.id}
                 variant={activeTab === item.id ? "secondary" : "ghost"}
@@ -517,19 +571,61 @@ export default function ShopDashboard() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto p-4 md:p-8">
-        <div className="flex items-center justify-between mb-8 md:hidden">
-          <Link href="/" className="flex items-center gap-2 text-primary font-bold">
-            <ArrowLeft className="h-4 w-4" />
-            Quitter
-          </Link>
-          <Badge className="bg-primary">Ma Boutique</Badge>
+      <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-8">
+        <div className="mb-6 flex items-center justify-between gap-3 md:hidden">
+          <div className="flex items-center gap-2">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="icon" className="shrink-0">
+                  <PanelLeft className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-[300px]">
+                <SheetHeader>
+                  <SheetTitle>Ma Boutique</SheetTitle>
+                </SheetHeader>
+                <div className="mt-6 flex flex-col gap-2">
+                  <div className="mb-4 rounded-lg border border-primary/10 bg-primary/5 px-3 py-4">
+                    <p className="truncate text-sm font-black uppercase tracking-tighter text-primary">
+                      {shop.name || ""}
+                    </p>
+                    <p className="text-[10px] font-bold text-muted-foreground">
+                      {shop.validation_status === "validated" ? "BOUTIQUE VALIDEE" : "VALIDATION EN COURS"}
+                    </p>
+                  </div>
+                  {navigationItems.map((item) => (
+                    <Button
+                      key={item.id}
+                      variant={activeTab === item.id ? "secondary" : "ghost"}
+                      className={`w-full justify-start gap-3 ${activeTab === item.id ? "bg-primary/10 text-primary" : "text-muted-foreground"}`}
+                      onClick={() => {
+                        setActiveTab(item.id)
+                        setShowAddProduct(false)
+                      }}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      {item.label}
+                    </Button>
+                  ))}
+                  <Button variant="ghost" className="mt-4 w-full justify-start gap-3 text-muted-foreground">
+                    <Settings className="h-4 w-4" />
+                    Configuration
+                  </Button>
+                </div>
+              </SheetContent>
+            </Sheet>
+            <Link href="/" className="flex items-center gap-2 text-primary font-bold">
+              <ArrowLeft className="h-4 w-4" />
+              Quitter
+            </Link>
+          </div>
+          <Badge className="shrink-0 bg-primary">Ma Boutique</Badge>
         </div>
 
         {showAddProduct ? (
           <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between">
-              <Button variant="ghost" onClick={() => setShowAddProduct(false)} className="gap-2">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <Button variant="ghost" onClick={() => setShowAddProduct(false)} className="gap-2 self-start">
                 <ArrowLeft className="h-4 w-4" />
                 Annuler
               </Button>
@@ -583,12 +679,44 @@ export default function ShopDashboard() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Image du produit</Label>
-                  <div className="border-2 border-dashed border-primary/10 rounded-xl p-8 text-center hover:border-primary/30 transition-colors cursor-pointer">
-                    <ImagePlus className="h-10 w-10 mx-auto text-primary/20" />
-                    <p className="text-sm font-medium mt-2">Cliquez pour ajouter une image</p>
-                    <p className="text-xs text-muted-foreground mt-1">PNG, JPG jusqu'a 5Mo</p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <Label>Images du produit</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Collez une ou plusieurs URLs publiques d'images.
+                      </p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleAddImageField}>
+                      <Plus className="h-4 w-4" />
+                      Ajouter une image
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {imageUrls.map((url, index) => (
+                      <div key={index} className="flex items-start gap-2">
+                        <div className="relative flex-1">
+                          <ImagePlus className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            value={url}
+                            onChange={(e) => handleImageUrlChange(index, e.target.value)}
+                            placeholder={`https://exemple.com/image-${index + 1}.jpg`}
+                            className="pl-9"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={() => handleRemoveImageField(index)}
+                          aria-label={`Supprimer l'image ${index + 1}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -613,12 +741,29 @@ export default function ShopDashboard() {
                 </p>
               </div>
               <Button
-                className="gap-2 bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold px-6 shadow-lg shadow-secondary/20"
+                className="w-full gap-2 bg-secondary px-6 font-bold text-secondary-foreground shadow-lg shadow-secondary/20 hover:bg-secondary/90 sm:w-auto"
                 onClick={() => setShowAddProduct(true)}
               >
                 <Plus className="h-4 w-4" />
                 Ajouter un produit
               </Button>
+            </div>
+
+            <div className="-mx-1 flex gap-2 overflow-x-auto pb-1 md:hidden">
+              {navigationItems.map((item) => (
+                <Button
+                  key={item.id}
+                  variant={activeTab === item.id ? "secondary" : "outline"}
+                  className={`shrink-0 gap-2 ${activeTab === item.id ? "bg-primary/10 text-primary" : "bg-transparent text-muted-foreground"}`}
+                  onClick={() => {
+                    setActiveTab(item.id)
+                    setShowAddProduct(false)
+                  }}
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </Button>
+              ))}
             </div>
 
             {activeTab === "overview" && (
@@ -709,8 +854,9 @@ export default function ShopDashboard() {
             )}
 
             {activeTab === "products" && (
-              <Card className="border-primary/10 overflow-hidden">
-                <Table>
+              <Card className="overflow-hidden border-primary/10">
+                <div className="overflow-x-auto">
+                <Table className="min-w-[720px]">
                   <TableHeader className="bg-muted/50">
                     <TableRow>
                       <TableHead className="font-bold">Produit</TableHead>
@@ -849,6 +995,7 @@ export default function ShopDashboard() {
                     )}
                   </TableBody>
                 </Table>
+                </div>
               </Card>
             )}
 
@@ -918,7 +1065,7 @@ export default function ShopDashboard() {
                                   Details
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent className="sm:max-w-[600px]">
+                              <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[600px]">
                                 <DialogHeader>
                                   <DialogTitle className="flex items-center justify-between pr-8">
                                     Commande {order.id}
@@ -926,7 +1073,7 @@ export default function ShopDashboard() {
                                   </DialogTitle>
                                 </DialogHeader>
                                 <div className="space-y-6 py-4">
-                                  <div className="grid grid-cols-2 gap-4 text-sm border-b pb-4">
+                                  <div className="grid gap-4 border-b pb-4 text-sm sm:grid-cols-2">
                                     <div>
                                       <p className="text-muted-foreground font-bold uppercase text-[10px]">Client</p>
                                       <p className="font-bold">{order.customer}</p>
@@ -983,8 +1130,9 @@ export default function ShopDashboard() {
             )}
 
             {activeTab === "customers" && (
-              <Card className="border-primary/10 overflow-hidden">
-                <Table>
+              <Card className="overflow-hidden border-primary/10">
+                <div className="overflow-x-auto">
+                <Table className="min-w-[640px]">
                   <TableHeader className="bg-muted/50">
                     <TableRow>
                       <TableHead className="font-bold">Nom du Client</TableHead>
@@ -1015,6 +1163,7 @@ export default function ShopDashboard() {
                     )}
                   </TableBody>
                 </Table>
+                </div>
               </Card>
             )}
           </div>

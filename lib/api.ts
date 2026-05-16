@@ -1,3 +1,5 @@
+import { extractApiErrorMessage, getUserFriendlyErrorMessage } from "./error-utils"
+
 export interface LoginRequest {
   email: string
   password: string
@@ -65,6 +67,12 @@ export interface Product {
     type: string
     url: string
   }>
+}
+
+export interface ProductMedia {
+  id: number
+  type: string
+  url: string
 }
 
 export interface Category {
@@ -149,296 +157,333 @@ export interface UpdateProductRequest {
   boutique?: number
 }
 
-// Client API unifié qui utilise uniquement les routes Next.js
+export interface AddProductMediaRequest {
+  url: string
+}
+
+export interface ProductQueryParams {
+  category?: number | string
+  ordering?: string
+  page?: number | string
+  search?: string
+  shop?: number | string
+  status?: string
+}
+
 class ApiClient {
-  async login(credentials: LoginRequest): Promise<AuthResponse> {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(credentials),
-      credentials: 'include'
-    })
+  private async request<T>(
+    input: RequestInfo | URL,
+    init: RequestInit,
+    fallbackMessage: string,
+    unauthorizedMessage?: string
+  ): Promise<T> {
+    try {
+      const response = await fetch(input, init)
 
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur de connexion')
+      if (!response.ok) {
+        const errorMessage = await extractApiErrorMessage(
+          response,
+          fallbackMessage,
+          unauthorizedMessage
+        )
+
+        throw new Error(errorMessage)
+      }
+
+      if (response.status === 204) {
+        return undefined as T
+      }
+
+      return response.json()
+    } catch (error) {
+      throw new Error(getUserFriendlyErrorMessage(error, fallbackMessage))
     }
+  }
 
-    return response.json()
+  async login(credentials: LoginRequest): Promise<AuthResponse> {
+    return this.request<AuthResponse>(
+      "/api/auth/login",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(credentials),
+        credentials: "include",
+      },
+      "Erreur de connexion"
+    )
   }
 
   async register(userData: RegisterRequest): Promise<AuthResponse> {
-    const response = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
+    return this.request<AuthResponse>(
+      "/api/auth/register",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(userData),
+        credentials: "include",
       },
-      body: JSON.stringify(userData),
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur lors de l\'inscription')
-    }
-
-    return response.json()
+      "Erreur lors de l'inscription"
+    )
   }
 
   async logout(): Promise<void> {
-    const response = await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      throw new Error('Erreur lors de la déconnexion')
-    }
+    await this.request<void>(
+      "/api/auth/logout",
+      {
+        method: "POST",
+        credentials: "include",
+      },
+      "Erreur lors de la deconnexion"
+    )
   }
 
-  async getProducts(): Promise<Product[]> {
-    const response = await fetch('/api/products', {
-      method: 'GET',
-      credentials: 'include'
-    })
+  async getProducts(params?: ProductQueryParams): Promise<Product[]> {
+    const searchParams = new URLSearchParams()
 
-    if (!response.ok) {
-      throw new Error('Erreur lors du chargement des produits')
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          searchParams.set(key, String(value))
+        }
+      })
     }
 
-    return response.json()
+    const query = searchParams.toString()
+
+    return this.request<Product[]>(
+      `/api/products${query ? `?${query}` : ""}`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Erreur lors du chargement des produits"
+    )
   }
 
   async getProduct(id: string): Promise<Product> {
-    const response = await fetch(`/api/products/${id}`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      throw new Error('Produit non trouvé')
-    }
-
-    return response.json()
+    return this.request<Product>(
+      `/api/products/${id}`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Produit non trouve"
+    )
   }
 
   async getCategories(): Promise<CategoryListResponse> {
-    const response = await fetch('/api/products/categories', {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      throw new Error('Erreur lors du chargement des categories')
-    }
-
-    return response.json()
+    return this.request<CategoryListResponse>(
+      "/api/products/categories",
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Erreur lors du chargement des categories"
+    )
   }
 
-  async updateProduct(id: string, payload: UpdateProductRequest, method: 'PUT' | 'PATCH' = 'PATCH'): Promise<Product> {
-    const response = await fetch(`/api/products/${id}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json'
+  async updateProduct(
+    id: string,
+    payload: UpdateProductRequest,
+    method: "PUT" | "PATCH" = "PATCH"
+  ): Promise<Product> {
+    return this.request<Product>(
+      `/api/products/${id}`,
+      {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        credentials: "include",
       },
-      body: JSON.stringify(payload),
-      credentials: 'include'
-    })
+      "Erreur lors de la mise a jour du produit"
+    )
+  }
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Erreur lors de la mise a jour du produit')
-    }
+  async getProductMedias(
+    productId: string
+  ): Promise<{ count: number; next: string | null; previous: string | null; results: ProductMedia[] }> {
+    return this.request<{ count: number; next: string | null; previous: string | null; results: ProductMedia[] }>(
+      `/api/products/${productId}/medias`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Impossible de charger les images du produit"
+    )
+  }
 
-    return response.json()
+  async addProductMedia(productId: string, payload: AddProductMediaRequest): Promise<ProductMedia> {
+    return this.request<ProductMedia>(
+      `/api/products/${productId}/medias`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        credentials: "include",
+      },
+      "Impossible d'ajouter l'image du produit"
+    )
   }
 
   async deleteProduct(id: string): Promise<void> {
-    const response = await fetch(`/api/products/${id}`, {
-      method: 'DELETE',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Erreur lors de la suppression du produit')
-    }
+    await this.request<void>(
+      `/api/products/${id}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+      },
+      "Erreur lors de la suppression du produit"
+    )
   }
 
   async getUserShop(): Promise<UserShopResponse> {
-    const response = await fetch('/api/user/shop', {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Non authentifié')
-      }
-      throw new Error('Erreur lors de la récupération de la boutique')
-    }
-
-    return response.json()
+    return this.request<UserShopResponse>(
+      "/api/user/shop",
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Erreur lors de la recuperation de la boutique",
+      "Non authentifie"
+    )
   }
 
   async getShop(id: string): Promise<Shop> {
-    const response = await fetch(`/api/boutiques/${id}`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Boutique non trouvee')
-    }
-
-    return response.json()
+    return this.request<Shop>(
+      `/api/boutiques/${id}`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Boutique non trouvee"
+    )
   }
 
-  async getShopProducts(id: string): Promise<{ shop: Shop | null; products: Product[]; total_products: number }> {
-    const response = await fetch(`/api/boutiques/${id}/products`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Impossible de charger les produits de la boutique')
-    }
-
-    return response.json()
+  async getShopProducts(
+    id: string
+  ): Promise<{ shop: Shop | null; products: Product[]; total_products: number }> {
+    return this.request<{ shop: Shop | null; products: Product[]; total_products: number }>(
+      `/api/boutiques/${id}/products`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Impossible de charger les produits de la boutique"
+    )
   }
 
   async getShopStats(id: string): Promise<ShopStats> {
-    const response = await fetch(`/api/boutiques/${id}/stats`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Impossible de charger les statistiques de la boutique')
-    }
-
-    return response.json()
+    return this.request<ShopStats>(
+      `/api/boutiques/${id}/stats`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Impossible de charger les statistiques de la boutique"
+    )
   }
 
-  async getShopOrders(id: string): Promise<{ shop: Shop | null; orders: ShopOrder[]; total_orders: number }> {
-    const response = await fetch(`/api/boutiques/${id}/orders`, {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}))
-      throw new Error(error.error || 'Impossible de charger les commandes de la boutique')
-    }
-
-    return response.json()
+  async getShopOrders(
+    id: string
+  ): Promise<{ shop: Shop | null; orders: ShopOrder[]; total_orders: number }> {
+    return this.request<{ shop: Shop | null; orders: ShopOrder[]; total_orders: number }>(
+      `/api/boutiques/${id}/orders`,
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Impossible de charger les commandes de la boutique"
+    )
   }
 
   async getUserProfile(): Promise<any> {
-    const response = await fetch('/api/user/profile', {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Non authentifié')
-      }
-      throw new Error('Erreur lors de la récupération du profil')
-    }
-
-    return response.json()
+    return this.request<any>(
+      "/api/user/profile",
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Erreur lors de la recuperation du profil",
+      "Non authentifie"
+    )
   }
 
   async updateUserProfile(profileData: any): Promise<any> {
-    const response = await fetch('/api/user/profile', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
+    return this.request<any>(
+      "/api/user/profile",
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(profileData),
+        credentials: "include",
       },
-      body: JSON.stringify(profileData),
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur lors de la mise à jour du profil')
-    }
-
-    return response.json()
+      "Erreur lors de la mise a jour du profil"
+    )
   }
 
   async getVerificationStatus(): Promise<any> {
-    const response = await fetch('/api/user/identity', {
-      method: 'GET',
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Non authentifié')
-      }
-      throw new Error('Erreur lors de la récupération du statut de vérification')
-    }
-
-    return response.json()
+    return this.request<any>(
+      "/api/user/identity",
+      {
+        method: "GET",
+        credentials: "include",
+      },
+      "Erreur lors de la recuperation du statut de verification",
+      "Non authentifie"
+    )
   }
 
   async forgotPassword(payload: ForgotPasswordRequest): Promise<{ message: string }> {
-    const response = await fetch('/api/auth/password/forgot', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
+    return this.request<{ message: string }>(
+      "/api/auth/password/forgot",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload)
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur lors de la demande de réinitialisation')
-    }
-
-    return response.json()
+      "Erreur lors de la demande de reinitialisation"
+    )
   }
 
   async changePassword(payload: ChangePasswordRequest): Promise<{ message: string }> {
-    const response = await fetch('/api/auth/password/change', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
+    return this.request<{ message: string }>(
+      "/api/auth/password/change",
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        credentials: "include",
       },
-      body: JSON.stringify(payload),
-      credentials: 'include'
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur lors du changement de mot de passe')
-    }
-
-    return response.json()
+      "Erreur lors du changement de mot de passe"
+    )
   }
 
   async resetPassword(payload: ResetPasswordRequest): Promise<{ message: string }> {
-    const response = await fetch('/api/auth/password/reset', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
+    return this.request<{ message: string }>(
+      "/api/auth/password/reset",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload)
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Erreur lors de la réinitialisation du mot de passe')
-    }
-
-    return response.json()
+      "Erreur lors de la reinitialisation du mot de passe"
+    )
   }
 }
 

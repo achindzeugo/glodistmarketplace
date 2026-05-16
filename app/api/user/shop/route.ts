@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { cookies } from "next/headers"
+import { isTokenError, refreshAccessToken, setAccessTokenCookie } from "@/lib/server-auth"
 import { normalizeShopListResponse } from "@/lib/shop-normalizer"
 import { extractApiErrorMessage } from "@/lib/user-normalizer"
 
@@ -22,29 +23,72 @@ async function readJsonSafely(response: Response) {
 export async function GET() {
   try {
     const cookieStore = await cookies()
-    const authToken = cookieStore.get("auth_token")?.value
+    let authToken = cookieStore.get("auth_token")?.value
+    const refreshToken = cookieStore.get("refresh_token")?.value
+
+    if (!authToken && refreshToken) {
+      authToken = await refreshAccessToken(refreshToken)
+    }
 
     if (!authToken) {
       return NextResponse.json(
-        { error: "Token d'authentification manquant" },
+        { error: "Votre session a expire. Veuillez vous reconnecter." },
         { status: 401 }
       )
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/shops/`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
-      },
-      cache: "no-store",
-    })
+    const sendShopRequest = async (token: string) => {
+      const response = await fetch(`${API_BASE_URL}/auth/shops/`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      })
 
-    const data = await readJsonSafely(response)
+      const data = await readJsonSafely(response)
+      return { response, data }
+    }
+
+    let { response, data } = await sendShopRequest(authToken)
+
+    if (!response.ok && refreshToken && isTokenError(response.status, data)) {
+      const refreshedAccessToken = await refreshAccessToken(refreshToken)
+
+      if (refreshedAccessToken) {
+        authToken = refreshedAccessToken
+        const retryResult = await sendShopRequest(refreshedAccessToken)
+        response = retryResult.response
+        data = retryResult.data
+
+        if (response.ok) {
+          const normalized = normalizeShopListResponse(data)
+          const nextResponse = NextResponse.json({
+            shop: normalized.results[0] ?? null,
+            shops: normalized.results,
+            pagination: {
+              count: normalized.count,
+              next: normalized.next,
+              previous: normalized.previous,
+            },
+          })
+          setAccessTokenCookie(nextResponse, refreshedAccessToken)
+          return nextResponse
+        }
+      }
+    }
 
     if (!response.ok) {
       if (response.status === 404) {
         return NextResponse.json({ shop: null, shops: [] })
+      }
+
+      if (response.status === 401) {
+        return NextResponse.json(
+          { error: "Votre session a expire. Veuillez vous reconnecter." },
+          { status: 401 }
+        )
       }
 
       return NextResponse.json(
@@ -56,8 +100,7 @@ export async function GET() {
     }
 
     const normalized = normalizeShopListResponse(data)
-
-    return NextResponse.json({
+    const nextResponse = NextResponse.json({
       shop: normalized.results[0] ?? null,
       shops: normalized.results,
       pagination: {
@@ -66,6 +109,12 @@ export async function GET() {
         previous: normalized.previous,
       },
     })
+
+    if (refreshToken && authToken !== cookieStore.get("auth_token")?.value) {
+      setAccessTokenCookie(nextResponse, authToken)
+    }
+
+    return nextResponse
   } catch (error) {
     console.error("Erreur lors de la recuperation de la boutique:", error)
     return NextResponse.json(

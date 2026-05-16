@@ -7,7 +7,7 @@ import { ShieldCheck, Star, ShoppingCart, Heart } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AuthManager } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
-import { apiClient } from "@/lib/api"
+import { getCachedUserShopState } from "@/lib/client-shop-cache"
 import { addCartItem } from "@/lib/cart"
 
 interface ProductCardProps {
@@ -26,6 +26,7 @@ export function ProductCard({ id, name, price, image, shop, shopId, verified, ra
   const { toast } = useToast()
   const [ownerShopId, setOwnerShopId] = useState<string | null>(null)
   const [shopResolved, setShopResolved] = useState(false)
+  const isOwnProduct = !!(shopResolved && ownerShopId && shopId && ownerShopId === shopId)
 
   const resolveOwnerShopId = async () => {
     if (!AuthManager.isAuthenticated()) {
@@ -39,8 +40,9 @@ export function ProductCard({ id, name, price, image, shop, shopId, verified, ra
     }
 
     try {
-      const userShopData = await apiClient.getUserShop()
-      const nextShopId = userShopData.shop?.id ? String(userShopData.shop.id) : null
+      const userData = AuthManager.getUser()
+      const shopState = await getCachedUserShopState(userData)
+      const nextShopId = shopState.shopId
       setOwnerShopId(nextShopId)
       setShopResolved(true)
       return nextShopId
@@ -84,7 +86,7 @@ export function ProductCard({ id, name, price, image, shop, shopId, verified, ra
       return
     }
 
-    addCartItem({
+    await addCartItem({
       id,
       name,
       price,
@@ -150,9 +152,10 @@ export function ProductCard({ id, name, price, image, shop, shopId, verified, ra
         <Button
           className="w-full gap-2 bg-primary font-semibold transition-all hover:bg-primary/90"
           onClick={handleAddToCart}
+          disabled={isOwnProduct}
         >
           <ShoppingCart className="h-4 w-4" />
-          Ajouter au panier
+          {isOwnProduct ? "Votre produit" : "Ajouter au panier"}
         </Button>
       </div>
     </div>

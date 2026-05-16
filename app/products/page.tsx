@@ -1,57 +1,89 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useSearchParams } from "next/navigation"
-import { Filter, Search } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { Filter, Search, SlidersHorizontal, Store } from "lucide-react"
 import { Navbar } from "@/components/navbar"
 import { UserProfileBanner } from "@/components/user-profile-banner"
 import { ProductCard } from "@/components/product-card"
 import { ProductGridSkeleton } from "@/components/product-skeleton"
 import { PageTransition, FadeTransition } from "@/components/page-transition"
 import { BackButton } from "@/components/back-button"
-import { apiClient, Product } from "@/lib/api"
-import { AuthManager } from "@/lib/auth"
+import { apiClient, Product, Shop } from "@/lib/api"
+import { getCachedPublicShops } from "@/lib/client-shop-cache"
 import { useToast } from "@/hooks/use-toast"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
+type FilterState = {
+  search: string
+  status: string
+  ordering: string
+  shop: string
+}
+
+const defaultFilters: FilterState = {
+  search: "",
+  status: "",
+  ordering: "",
+  shop: "",
+}
+
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
+  const [shops, setShops] = useState<Shop[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState("")
+  const [loadingShops, setLoadingShops] = useState(true)
+  const [categoryLabel, setCategoryLabel] = useState("")
+  const [filters, setFilters] = useState<FilterState>(defaultFilters)
+
+  const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const { toast } = useToast()
 
-  useEffect(() => {
-    void loadProducts()
-  }, [])
+  const categoryId = searchParams.get("category") ?? ""
 
   useEffect(() => {
-    setSearchTerm(searchParams.get("search") ?? "")
+    const nextFilters = {
+      search: searchParams.get("search") ?? "",
+      status: searchParams.get("status") ?? "",
+      ordering: searchParams.get("ordering") ?? "",
+      shop: searchParams.get("shop") ?? "",
+    }
+
+    setFilters(nextFilters)
+    setCategoryLabel(searchParams.get("categoryLabel") ?? "")
+    void loadProducts(nextFilters)
   }, [searchParams])
 
-  const loadProducts = async () => {
+  useEffect(() => {
+    const loadShops = async () => {
+      try {
+        setLoadingShops(true)
+        const list = await getCachedPublicShops()
+        setShops(list)
+      } catch {
+        setShops([])
+      } finally {
+        setLoadingShops(false)
+      }
+    }
+
+    void loadShops()
+  }, [])
+
+  const loadProducts = async (nextFilters: FilterState) => {
     try {
       setLoading(true)
-      const productsData = await apiClient.getProducts()
-      const currentUser = AuthManager.getUser()
-      let filteredProducts = productsData
-
-      if (currentUser) {
-        try {
-          const userShopData = await apiClient.getUserShop()
-
-          if (userShopData.shop?.id) {
-            filteredProducts = productsData.filter(
-              (product) => product.boutique !== userShopData.shop.id.toString()
-            )
-          }
-        } catch (error) {
-          console.warn("Impossible de recuperer la boutique de l utilisateur:", error)
-        }
-      }
-
-      setProducts(filteredProducts)
+      const productsData = await apiClient.getProducts({
+        ...(nextFilters.search ? { search: nextFilters.search } : {}),
+        ...(nextFilters.status ? { status: nextFilters.status } : {}),
+        ...(nextFilters.ordering ? { ordering: nextFilters.ordering } : {}),
+        ...(nextFilters.shop ? { shop: nextFilters.shop } : {}),
+        ...(categoryId ? { category: categoryId } : {}),
+      })
+      setProducts(productsData)
     } catch {
       toast({
         title: "Erreur",
@@ -63,11 +95,57 @@ export default function ProductsPage() {
     }
   }
 
-  const filteredProducts = products.filter(
-    (product) =>
-      product.nom.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const updateQuery = (nextFilters: FilterState) => {
+    const params = new URLSearchParams(searchParams.toString())
+
+    if (categoryId) {
+      params.set("category", categoryId)
+    } else {
+      params.delete("category")
+    }
+
+    if (categoryLabel) {
+      params.set("categoryLabel", categoryLabel)
+    } else {
+      params.delete("categoryLabel")
+    }
+
+    Object.entries(nextFilters).forEach(([key, value]) => {
+      if (value) {
+        params.set(key, value)
+      } else {
+        params.delete(key)
+      }
+    })
+
+    const query = params.toString()
+    router.push(query ? `${pathname}?${query}` : pathname)
+  }
+
+  const handleApplyFilters = () => {
+    updateQuery(filters)
+  }
+
+  const handleResetFilters = () => {
+    const resetFilters = { ...defaultFilters }
+    setFilters(resetFilters)
+    const params = new URLSearchParams()
+
+    if (categoryId) {
+      params.set("category", categoryId)
+    }
+
+    if (categoryLabel) {
+      params.set("categoryLabel", categoryLabel)
+    }
+
+    const query = params.toString()
+    router.push(query ? `${pathname}?${query}` : pathname)
+  }
+
+  const activeFilterCount = useMemo(() => {
+    return Object.values(filters).filter(Boolean).length + (categoryId ? 1 : 0)
+  }, [filters, categoryId])
 
   return (
     <PageTransition className="min-h-screen bg-background">
@@ -82,24 +160,88 @@ export default function ProductsPage() {
               <div>
                 <h1 className="text-3xl font-bold tracking-tight">Tous les produits</h1>
                 <p className="text-muted-foreground">
-                  Decouvrez notre selection de produits de qualite
+                  {categoryLabel
+                    ? `Produits de la categorie ${categoryLabel}`
+                    : "Decouvrez notre selection de produits de qualite"}
                 </p>
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 sm:flex-row md:w-auto">
-              <div className="relative flex-1 md:w-80">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Filter className="h-4 w-4" />
+              {activeFilterCount} filtre{activeFilterCount > 1 ? "s" : ""} actif{activeFilterCount > 1 ? "s" : ""}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-primary/10 bg-card p-4 shadow-sm">
+            <div className="mb-4 flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              <h2 className="font-semibold">Filtres produits</h2>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="relative xl:col-span-2">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher des produits..."
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  className="pl-9 transition-all duration-200 focus:ring-2 focus:ring-primary/20"
+                  placeholder="Rechercher par nom ou description..."
+                  value={filters.search}
+                  onChange={(event) =>
+                    setFilters((prev) => ({ ...prev, search: event.target.value }))
+                  }
+                  className="pl-9"
                 />
               </div>
-              <Button variant="outline" size="icon" className="transition-colors hover:bg-primary/5">
-                <Filter className="h-4 w-4" />
+
+              <select
+                value={filters.status}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, status: event.target.value }))
+                }
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Tous les statuts</option>
+                <option value="active">Actifs</option>
+                <option value="inactive">Inactifs</option>
+                <option value="out_of_stock">Rupture de stock</option>
+              </select>
+
+              <select
+                value={filters.ordering}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, ordering: event.target.value }))
+                }
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Tri par defaut</option>
+                <option value="-created_at">Plus recents</option>
+                <option value="created_at">Plus anciens</option>
+                <option value="price">Prix croissant</option>
+                <option value="-price">Prix decroissant</option>
+                <option value="name">Nom A-Z</option>
+              </select>
+
+              <select
+                value={filters.shop}
+                onChange={(event) =>
+                  setFilters((prev) => ({ ...prev, shop: event.target.value }))
+                }
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                disabled={loadingShops}
+              >
+                <option value="">Toutes les boutiques</option>
+                {shops.map((shop) => (
+                  <option key={shop.id} value={shop.id}>
+                    {shop.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={handleResetFilters}>
+                Reinitialiser
               </Button>
+              <Button onClick={handleApplyFilters}>Appliquer les filtres</Button>
             </div>
           </div>
 
@@ -111,13 +253,13 @@ export default function ProductsPage() {
             <FadeTransition>
               <div className="mb-4 flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
-                  {filteredProducts.length} produit{filteredProducts.length > 1 ? "s" : ""} trouve{filteredProducts.length > 1 ? "s" : ""}
+                  {products.length} produit{products.length > 1 ? "s" : ""} trouve{products.length > 1 ? "s" : ""}
                 </p>
               </div>
 
-              {filteredProducts.length > 0 ? (
+              {products.length > 0 ? (
                 <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                  {filteredProducts.map((product, index) => (
+                  {products.map((product, index) => (
                     <div
                       key={product.id}
                       className="animate-in fade-in-0 slide-in-from-bottom-4"
@@ -137,8 +279,9 @@ export default function ProductsPage() {
                   ))}
                 </div>
               ) : (
-                <div className="animate-in fade-in-0 slide-in-from-bottom-4 py-12 text-center">
-                  <p className="text-muted-foreground">Aucun produit trouve</p>
+                <div className="animate-in fade-in-0 slide-in-from-bottom-4 rounded-2xl border border-dashed py-12 text-center">
+                  <Store className="mx-auto mb-4 h-10 w-10 text-muted-foreground/30" />
+                  <p className="text-muted-foreground">Aucun produit ne correspond a ces filtres.</p>
                 </div>
               )}
             </FadeTransition>
