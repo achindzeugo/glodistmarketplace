@@ -17,14 +17,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { AuthManager } from "@/lib/auth"
-import { apiClient, User } from "@/lib/api"
+import { User } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { AppLogo } from "@/components/app-logo"
+import { getCachedUserShopState } from "@/lib/client-shop-cache"
+import { CART_UPDATED_EVENT, getCartItemsCount, syncCartFromServer } from "@/lib/cart"
 
 export function Navbar() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [hasShop, setHasShop] = useState(false)
+  const [shopStatusResolved, setShopStatusResolved] = useState(false)
+  const [cartItemsCount, setCartItemsCount] = useState(0)
   const router = useRouter()
   const { toast } = useToast()
 
@@ -37,22 +41,49 @@ export function Navbar() {
 
       if (!authenticated || !userData) {
         setHasShop(false)
+        setShopStatusResolved(true)
         return
       }
 
       try {
-        const userShopData = await apiClient.getUserShop()
-        setHasShop(!!userShopData.shop?.id)
+        const shopState = await getCachedUserShopState(userData)
+        setHasShop(shopState.hasShop)
+        setShopStatusResolved(true)
+        if (shopState.upgradedUser && shopState.hasShop) {
+          setUser(shopState.upgradedUser)
+          AuthManager.setUser(shopState.upgradedUser)
+        }
       } catch {
         setHasShop(false)
+        setShopStatusResolved(true)
       }
     }
 
     void checkAuth()
-    const interval = setInterval(() => {
-      void checkAuth()
-    }, 3000)
-    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const syncCartCount = () => {
+      setCartItemsCount(getCartItemsCount())
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === "glodist_cart") {
+        syncCartCount()
+      }
+    }
+
+    syncCartCount()
+    if (AuthManager.isAuthenticated()) {
+      void syncCartFromServer()
+    }
+    window.addEventListener(CART_UPDATED_EVENT, syncCartCount)
+    window.addEventListener("storage", handleStorage)
+
+    return () => {
+      window.removeEventListener(CART_UPDATED_EVENT, syncCartCount)
+      window.removeEventListener("storage", handleStorage)
+    }
   }, [])
 
   const handleLogout = async () => {
@@ -76,7 +107,7 @@ export function Navbar() {
         <div className="flex h-24 items-center justify-between gap-4">
           {/* Logo */}
           <Link href="/" className="flex items-center space-x-2 shrink-0">
-            <AppLogo className="max-h-18 w-auto" priority />
+            <AppLogo className="h-20 w-auto" priority />
           </Link>
 
           {/* Desktop nav links */}
@@ -110,6 +141,11 @@ export function Navbar() {
             <Link href="/cart">
               <Button variant="ghost" size="icon" className="relative hover:scale-110 transition-transform duration-200">
                 <ShoppingCart className="h-5 w-5" />
+                {cartItemsCount > 0 ? (
+                  <span className="absolute -right-1 -top-1 flex min-w-5 items-center justify-center rounded-full bg-sky-500 px-1.5 text-[10px] font-bold leading-5 text-white shadow-sm">
+                    {cartItemsCount > 99 ? "99+" : cartItemsCount}
+                  </span>
+                ) : null}
               </Button>
             </Link>
 
@@ -178,7 +214,7 @@ export function Navbar() {
               <SheetContent side="right" className="w-[300px] sm:w-[400px]">
                 <SheetHeader>
                   <SheetTitle className="text-left">
-                    <AppLogo className="max-h-16 w-auto" />
+                    <AppLogo className="h-20 w-auto" />
                   </SheetTitle>
                 </SheetHeader>
                 <div className="flex flex-col gap-4 py-6">
@@ -216,6 +252,14 @@ export function Navbar() {
                           <Button variant="outline" className="w-full gap-2 bg-transparent">
                             <ShoppingBag className="h-4 w-4" />
                             Ma Boutique
+                          </Button>
+                        </Link>
+                      )}
+                      {!hasShop && shopStatusResolved && user.role === "Client" && (
+                        <Link href="/shop-registration">
+                          <Button variant="outline" className="w-full gap-2 bg-transparent">
+                            <ShoppingBag className="h-4 w-4" />
+                            Devenir vendeur
                           </Button>
                         </Link>
                       )}

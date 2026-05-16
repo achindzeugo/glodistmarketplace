@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { use, useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Navbar } from "@/components/navbar"
 import { UserProfileBanner } from "@/components/user-profile-banner"
@@ -22,7 +22,8 @@ function formatDate(value?: string) {
   }).format(new Date(value))
 }
 
-export default function ShopProfilePage({ params }: { params: { id: string } }) {
+export default function ShopProfilePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const [shop, setShop] = useState<Shop | null>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,8 +33,8 @@ export default function ShopProfilePage({ params }: { params: { id: string } }) 
     const fetchData = async () => {
       try {
         const [shopData, shopProductsResponse] = await Promise.all([
-          apiClient.getShop(params.id),
-          apiClient.getShopProducts(params.id),
+          apiClient.getShop(id),
+          apiClient.getShopProducts(id),
         ])
 
         setShop(shopData)
@@ -46,7 +47,7 @@ export default function ShopProfilePage({ params }: { params: { id: string } }) 
     }
 
     fetchData()
-  }, [params.id, router])
+  }, [id, router])
 
   return (
     <PageTransition className="min-h-screen bg-background">

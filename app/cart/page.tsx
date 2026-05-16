@@ -14,7 +14,9 @@ import {
   CART_UPDATED_EVENT,
   CartItem,
   getCartItems,
+  getCartItemsCount,
   removeCartItem,
+  syncCartFromServer,
   updateCartItemQuantity,
 } from "@/lib/cart"
 
@@ -24,25 +26,37 @@ export default function CartPage() {
   const { toast } = useToast()
 
   useEffect(() => {
-    const syncCart = () => {
-      setCartItems(getCartItems())
+    const syncCart = async () => {
+      setCartItems(await getCartItems())
     }
 
-    syncCart()
-    window.addEventListener(CART_UPDATED_EVENT, syncCart)
+    const handleCartUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<CartItem[]>
+
+      if (Array.isArray(customEvent.detail)) {
+        setCartItems(customEvent.detail)
+        return
+      }
+
+      void syncCart()
+    }
+
+    void syncCart()
+    void syncCartFromServer()
+    window.addEventListener(CART_UPDATED_EVENT, handleCartUpdated)
 
     return () => {
-      window.removeEventListener(CART_UPDATED_EVENT, syncCart)
+      window.removeEventListener(CART_UPDATED_EVENT, handleCartUpdated)
     }
   }, [])
 
-  const updateQuantity = (id: string, newQuantity: number) => {
-    const updatedItems = updateCartItemQuantity(id, newQuantity)
+  const updateQuantity = async (id: string, newQuantity: number) => {
+    const updatedItems = await updateCartItemQuantity(id, newQuantity)
     setCartItems(updatedItems)
   }
 
-  const removeItem = (id: string) => {
-    const updatedItems = removeCartItem(id)
+  const removeItem = async (id: string) => {
+    const updatedItems = await removeCartItem(id)
     setCartItems(updatedItems)
     toast({
       title: "Produit retire",
@@ -73,7 +87,7 @@ export default function CartPage() {
             <ShoppingCart className="h-6 w-6" />
             <h1 className="text-3xl font-bold tracking-tight">Mon Panier</h1>
             <span className="text-muted-foreground">
-              ({cartItems.length} article{cartItems.length > 1 ? "s" : ""})
+              ({getCartItemsCount(cartItems)} article{getCartItemsCount(cartItems) > 1 ? "s" : ""})
             </span>
           </div>
         </div>

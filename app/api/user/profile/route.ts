@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { extractApiErrorMessage, normalizeUser } from '@/lib/user-normalizer'
+import { normalizeShopListResponse } from '@/lib/shop-normalizer'
 
 const API_BASE_URL = 'https://glodistapi.onrender.com/api/v1'
 
@@ -54,6 +55,51 @@ async function fetchRemoteProfile(authToken: string) {
   return response.json()
 }
 
+async function fetchRemoteShops(authToken: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/shops/`, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    }
+  })
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { results: [] }
+    }
+
+    const error = await response.json().catch(() => null)
+    throw new Error(extractApiErrorMessage(error, 'Erreur lors de la recuperation de la boutique'))
+  }
+
+  const data = await response.json().catch(() => null)
+  return normalizeShopListResponse(data)
+}
+
+async function buildEffectiveUser(authToken: string) {
+  const profileData = await fetchRemoteProfile(authToken)
+  const normalizedUser = normalizeUser(profileData)
+
+  try {
+    const shopData = await fetchRemoteShops(authToken)
+    const hasShop = !!shopData.results[0]?.id
+
+    if (hasShop) {
+      return {
+        ...normalizedUser,
+        role: 'Vendeur',
+        vente: true,
+      }
+    }
+  } catch (error) {
+    console.warn('Impossible de verifier la boutique utilisateur lors du profil:', error)
+  }
+
+  return normalizedUser
+}
+
 export async function GET() {
   try {
     const cookieStore = await cookies()
@@ -66,8 +112,17 @@ export async function GET() {
       )
     }
 
-    const profileData = await fetchRemoteProfile(authToken)
-    return NextResponse.json(normalizeUser(profileData))
+    const effectiveUser = await buildEffectiveUser(authToken)
+    const nextResponse = NextResponse.json(effectiveUser)
+    nextResponse.cookies.set('user_data', JSON.stringify(effectiveUser), {
+      httpOnly: false,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 7,
+      path: '/'
+    })
+
+    return nextResponse
 
   } catch (error) {
     console.error('Erreur lors de la récupération du profil:', error)
@@ -127,8 +182,8 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    const updatedProfile = await response.json()
-    const normalizedUser = normalizeUser(updatedProfile)
+    await response.json()
+    const normalizedUser = await buildEffectiveUser(authToken)
 
     const nextResponse = NextResponse.json(normalizedUser)
     nextResponse.cookies.set('user_data', JSON.stringify(normalizedUser), {

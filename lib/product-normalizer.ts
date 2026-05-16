@@ -49,13 +49,29 @@ function normalizeStatusToApi(status: string): string {
   }
 }
 
-function normalizeMedia(rawMedia: unknown) {
+export function normalizeMedia(rawMedia: unknown) {
   const media = (rawMedia || {}) as UnknownRecord
 
   return {
     id: readNumber(media.id),
     type: readString(media.type) || readString(media.media_type) || "image",
     url: readString(media.url),
+  }
+}
+
+export function normalizeMediaListResponse(rawPayload: unknown) {
+  const payload = (rawPayload || {}) as UnknownRecord
+  const rawResults = Array.isArray(payload.results)
+    ? payload.results
+    : Array.isArray(rawPayload)
+      ? rawPayload
+      : []
+
+  return {
+    count: readNumber(payload.count, rawResults.length),
+    next: typeof payload.next === "string" ? payload.next : null,
+    previous: typeof payload.previous === "string" ? payload.previous : null,
+    results: rawResults.map(normalizeMedia),
   }
 }
 
