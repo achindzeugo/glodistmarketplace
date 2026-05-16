@@ -50,6 +50,7 @@ import {
 } from "lucide-react"
 export default function ProfilePage() {
   const [user, setUser] = useState<User | null>(null)
+  const [hasShop, setHasShop] = useState(false)
   const [loading, setLoading] = useState(true)
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -89,11 +90,30 @@ export default function ProfilePage() {
       try {
         // Essayer de récupérer le profil depuis l'API pour avoir les données les plus récentes
         const freshProfile = await apiClient.getUserProfile()
-        setUser(freshProfile)
+        let effectiveUser = freshProfile
+
+        try {
+          const userShopData = await apiClient.getUserShop()
+          const nextHasShop = !!userShopData.shop?.id
+          setHasShop(nextHasShop)
+
+          if (nextHasShop) {
+            effectiveUser = {
+              ...freshProfile,
+              role: 'Vendeur',
+              vente: true
+            }
+          }
+        } catch (shopError) {
+          setHasShop(false)
+        }
+
+        setUser(effectiveUser)
+        AuthManager.setUser(effectiveUser)
         setEditForm({
-          prenom: freshProfile.prenom,
-          nom: freshProfile.nom,
-          telephone: freshProfile.telephone
+          prenom: effectiveUser.prenom,
+          nom: effectiveUser.nom,
+          telephone: effectiveUser.telephone
         })
         
         // Récupérer le statut de vérification réel depuis l'API
@@ -111,18 +131,37 @@ export default function ProfilePage() {
           }
         } catch (verificationError) {
           // En cas d'erreur, utiliser le statut basé sur le compte
-          setVerificationStatus(freshProfile.statut_compte === 'Actif' ? 'verified' : 'none')
+          setVerificationStatus(effectiveUser.statut_compte === 'Actif' ? 'verified' : 'none')
         }
       } catch (error) {
         // En cas d'erreur, utiliser les données du cookie
         console.warn('Impossible de récupérer le profil depuis l\'API, utilisation des données locales')
-        setUser(userData)
+        let effectiveUser = userData
+
+        try {
+          const userShopData = await apiClient.getUserShop()
+          const nextHasShop = !!userShopData.shop?.id
+          setHasShop(nextHasShop)
+
+          if (nextHasShop) {
+            effectiveUser = {
+              ...userData,
+              role: 'Vendeur',
+              vente: true
+            }
+          }
+        } catch (shopError) {
+          setHasShop(false)
+        }
+
+        setUser(effectiveUser)
+        AuthManager.setUser(effectiveUser)
         setEditForm({
-          prenom: userData.prenom,
-          nom: userData.nom,
-          telephone: userData.telephone
+          prenom: effectiveUser.prenom,
+          nom: effectiveUser.nom,
+          telephone: effectiveUser.telephone
         })
-        setVerificationStatus(userData.statut_compte === 'Actif' ? 'verified' : 'none')
+        setVerificationStatus(effectiveUser.statut_compte === 'Actif' ? 'verified' : 'none')
       } finally {
         setLoading(false)
       }
@@ -195,7 +234,12 @@ export default function ProfilePage() {
       setIsEditing(false)
       
       // Mettre à jour l'utilisateur local avec les données de l'API
-      setUser(updatedProfile)
+      const effectiveUpdatedProfile = hasShop
+        ? { ...updatedProfile, role: 'Vendeur', vente: true }
+        : updatedProfile
+
+      setUser(effectiveUpdatedProfile)
+      AuthManager.setUser(effectiveUpdatedProfile)
       
     } catch (error) {
       toast({
@@ -381,8 +425,8 @@ export default function ProfilePage() {
                     <h2 className="text-2xl font-bold">{user.prenom} {user.nom}</h2>
                     <p className="text-muted-foreground">{user.email}</p>
                     <div className="flex items-center gap-2">
-                      <Badge variant={user.role === 'Vendeur' ? 'default' : 'secondary'}>
-                        {user.role}
+                      <Badge variant={(user.role === 'Vendeur' || hasShop) ? 'default' : 'secondary'}>
+                        {hasShop ? 'Vendeur' : user.role}
                       </Badge>
                       {user.statut_compte === 'Actif' && (
                         <Badge variant="outline" className="text-green-600 border-green-600">
@@ -508,7 +552,7 @@ export default function ProfilePage() {
               </Card>
             </FadeTransition>
 
-            {user.role === 'Vendeur' && (
+            {(user.role === 'Vendeur' || hasShop) && (
               <FadeTransition className="animation-delay-300">
                 <Card className="hover:shadow-md transition-shadow duration-200">
                   <CardHeader>

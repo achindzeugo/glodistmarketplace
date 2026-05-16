@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import type { PointerEvent as ReactPointerEvent } from "react"
 import Link from "next/link"
 import {
   ArrowRight,
@@ -26,6 +27,7 @@ import { PageTransition, FadeTransition } from "@/components/page-transition"
 import { Button } from "@/components/ui/button"
 import { AppLogo } from "@/components/app-logo"
 import { apiClient, Category, Product } from "@/lib/api"
+import { getCachedUserShopState } from "@/lib/client-shop-cache"
 import { AuthManager, User } from "@/lib/auth"
 
 type CategoryTheme = {
@@ -79,6 +81,9 @@ export default function HomePage() {
   const [loadingCategories, setLoadingCategories] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const [hasShop, setHasShop] = useState(false)
+  const [shopStatusResolved, setShopStatusResolved] = useState(false)
+  const [heroScrollProgress, setHeroScrollProgress] = useState(0)
+  const [heroPointerTilt, setHeroPointerTilt] = useState({ x: 0, y: 0 })
 
   useEffect(() => {
     let isMounted = true
@@ -94,21 +99,28 @@ export default function HomePage() {
 
       if (!userData) {
         setHasShop(false)
+        setShopStatusResolved(true)
         return null
       }
 
       try {
-        const userShopData = await apiClient.getUserShop()
-        const nextShopId = userShopData.shop?.id ? String(userShopData.shop.id) : null
+        const shopState = await getCachedUserShopState(userData)
+        const nextShopId = shopState.shopId
 
         if (isMounted) {
-          setHasShop(!!nextShopId)
+          setHasShop(shopState.hasShop)
+          setShopStatusResolved(true)
+          if (shopState.upgradedUser && shopState.hasShop) {
+            setUser(shopState.upgradedUser)
+            AuthManager.setUser(shopState.upgradedUser)
+          }
         }
 
         return nextShopId
       } catch {
         if (isMounted) {
           setHasShop(false)
+          setShopStatusResolved(true)
         }
 
         return null
@@ -118,12 +130,9 @@ export default function HomePage() {
     const loadFeaturedProducts = async (shopId: string | null) => {
       try {
         const products = await apiClient.getProducts()
-        const filteredProducts = shopId
-          ? products.filter((product) => product.boutique !== shopId)
-          : products
 
         if (isMounted) {
-          setFeaturedProducts(filteredProducts.slice(0, 4))
+          setFeaturedProducts(products.slice(0, 4))
         }
       } catch {
         if (isMounted) {
@@ -161,15 +170,64 @@ export default function HomePage() {
 
     void bootstrap()
 
-    const interval = setInterval(() => {
-      void syncUserState()
-    }, 3000)
-
     return () => {
       isMounted = false
-      clearInterval(interval)
     }
   }, [])
+
+  useEffect(() => {
+    let frameId = 0
+
+    const updateScrollMotion = () => {
+      const nextProgress = Math.min(window.scrollY / 420, 1)
+      setHeroScrollProgress(nextProgress)
+      frameId = 0
+    }
+
+    const handleScroll = () => {
+      if (frameId) {
+        return
+      }
+
+      frameId = window.requestAnimationFrame(updateScrollMotion)
+    }
+
+    handleScroll()
+    window.addEventListener("scroll", handleScroll, { passive: true })
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll)
+      if (frameId) {
+        window.cancelAnimationFrame(frameId)
+      }
+    }
+  }, [])
+
+  const handleHeroPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    const relativeX = ((event.clientX - rect.left) / rect.width - 0.5) * 2
+    const relativeY = ((event.clientY - rect.top) / rect.height - 0.5) * 2
+
+    setHeroPointerTilt({
+      x: Math.max(-1, Math.min(1, relativeX)),
+      y: Math.max(-1, Math.min(1, relativeY)),
+    })
+  }
+
+  const resetHeroPointerTilt = () => {
+    setHeroPointerTilt({ x: 0, y: 0 })
+  }
+
+  const phoneRotateX = 18 - heroScrollProgress * 12 - heroPointerTilt.y * 5
+  const phoneRotateY = heroPointerTilt.x * 9
+  const phoneTranslateY = heroScrollProgress * -26 - heroPointerTilt.y * 6
+  const phoneTranslateX = heroPointerTilt.x * 10
+  const phoneScale = 1 + heroScrollProgress * 0.03
+  const phoneShadowY = 34 + heroScrollProgress * 18
+  const phoneShadowBlur = 85 + heroScrollProgress * 14
+  const backgroundRingOffset = heroScrollProgress * 34
+  const backgroundRingScale = 1 + heroScrollProgress * 0.06
+  const badgeLift = heroScrollProgress * 10
 
   return (
     <PageTransition className="min-h-screen bg-background">
@@ -225,7 +283,7 @@ export default function HomePage() {
                         Ma Boutique
                       </Button>
                     </Link>
-                  ) : user?.role === "Client" ? (
+                  ) : shopStatusResolved && user?.role === "Client" ? (
                     <Link href="/shop-registration">
                       <Button
                         size="lg"
@@ -261,20 +319,56 @@ export default function HomePage() {
                 </div>
               </div>
 
-              <div className="relative flex min-h-[320px] items-center justify-center lg:min-h-[460px]">
-                <div className="absolute hidden size-[470px] rounded-full border border-white/[0.06] lg:block" />
-                <div className="absolute hidden size-[360px] rounded-full border border-white/[0.09] lg:block" />
-                <div className="absolute size-[220px] rounded-full border border-white/10 bg-white/[0.04] sm:size-[250px]" />
+              <div
+                className="relative flex min-h-[320px] items-center justify-center [perspective:1400px] lg:min-h-[460px]"
+                onPointerMove={handleHeroPointerMove}
+                onPointerLeave={resetHeroPointerTilt}
+              >
+                <div
+                  className="absolute hidden size-[470px] rounded-full border border-white/[0.06] transition-transform duration-300 ease-out lg:block"
+                  style={{
+                    transform: `translateY(${backgroundRingOffset}px) scale(${backgroundRingScale})`,
+                  }}
+                />
+                <div
+                  className="absolute hidden size-[360px] rounded-full border border-white/[0.09] transition-transform duration-300 ease-out lg:block"
+                  style={{
+                    transform: `translateY(${backgroundRingOffset * 0.7}px) scale(${1 + heroScrollProgress * 0.04})`,
+                  }}
+                />
+                <div
+                  className="absolute size-[220px] rounded-full border border-white/10 bg-white/[0.04] transition-transform duration-300 ease-out sm:size-[250px]"
+                  style={{
+                    transform: `translateY(${backgroundRingOffset * 0.45}px) scale(${1 + heroScrollProgress * 0.03})`,
+                  }}
+                />
 
-                <div className="relative z-10 size-56 overflow-hidden rounded-full border-2 border-white/30 bg-gradient-to-br from-white/25 to-white/10 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur-sm sm:size-64 lg:size-80">
+                <div
+                  className="relative z-10 size-56 overflow-hidden rounded-full border-2 border-white/30 bg-gradient-to-br from-white/25 to-white/10 backdrop-blur-sm transition-transform duration-300 ease-out will-change-transform sm:size-64 lg:size-80"
+                  style={{
+                    transform: `translate3d(${phoneTranslateX}px, ${phoneTranslateY}px, ${heroScrollProgress * 28}px) rotateX(${phoneRotateX}deg) rotateY(${phoneRotateY}deg) scale(${phoneScale})`,
+                    boxShadow: `0 ${phoneShadowY}px ${phoneShadowBlur}px rgba(0, 0, 0, 0.38)`,
+                  }}
+                >
                   <img
                     src="/modern-smartphone.png"
                     alt="Produits Glodist"
                     className="h-full w-full scale-110 object-cover object-center"
                   />
+                  <div
+                    className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_18%,rgba(255,255,255,0.28),transparent_34%),radial-gradient(circle_at_72%_78%,rgba(255,255,255,0.12),transparent_28%)] mix-blend-screen"
+                    style={{
+                      transform: `translate(${heroPointerTilt.x * 10}px, ${heroPointerTilt.y * 10}px)`,
+                    }}
+                  />
                 </div>
 
-                <div className="absolute left-2 top-6 z-20 rounded-2xl bg-white px-3 py-2 shadow-2xl sm:left-0 sm:top-12">
+                <div
+                  className="absolute left-2 top-6 z-20 rounded-2xl bg-white px-3 py-2 shadow-2xl transition-transform duration-300 ease-out sm:left-0 sm:top-12"
+                  style={{
+                    transform: `translate3d(${heroPointerTilt.x * -8}px, ${badgeLift}px, 0)`,
+                  }}
+                >
                   <div className="flex items-center gap-2.5">
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-secondary/15">
                       <ShieldCheck className="h-5 w-5 text-secondary" />
@@ -288,7 +382,12 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="absolute right-2 top-8 z-20 rounded-xl bg-secondary px-3 py-2 shadow-xl sm:right-0 sm:top-16">
+                <div
+                  className="absolute right-2 top-8 z-20 rounded-xl bg-secondary px-3 py-2 shadow-xl transition-transform duration-300 ease-out sm:right-0 sm:top-16"
+                  style={{
+                    transform: `translate3d(${heroPointerTilt.x * 10}px, ${badgeLift * 0.7}px, 0)`,
+                  }}
+                >
                   <div className="flex items-center gap-2">
                     <Truck className="h-4 w-4 text-secondary-foreground" />
                     <div>
@@ -298,12 +397,22 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="absolute bottom-10 left-3 z-20 rounded-2xl bg-white px-3.5 py-2.5 text-center shadow-xl sm:left-8">
+                <div
+                  className="absolute bottom-10 left-3 z-20 rounded-2xl bg-white px-3.5 py-2.5 text-center shadow-xl transition-transform duration-300 ease-out sm:left-8"
+                  style={{
+                    transform: `translate3d(${heroPointerTilt.x * -6}px, ${-badgeLift * 0.55}px, 0)`,
+                  }}
+                >
                   <p className="text-xl font-black leading-none text-primary">10K+</p>
                   <p className="text-[10px] font-semibold text-muted-foreground">Produits</p>
                 </div>
 
-                <div className="absolute bottom-14 right-0 z-20 rounded-2xl bg-white p-3 shadow-2xl">
+                <div
+                  className="absolute bottom-14 right-0 z-20 rounded-2xl bg-white p-3 shadow-2xl transition-transform duration-300 ease-out"
+                  style={{
+                    transform: `translate3d(${heroPointerTilt.x * 8}px, ${-badgeLift * 0.75}px, 0)`,
+                  }}
+                >
                   <div className="mb-1.5 flex items-center gap-0.5">
                     {[...Array(5)].map((_, index) => (
                       <Star key={index} className="h-3 w-3 fill-yellow-400 text-yellow-400" />
@@ -344,7 +453,7 @@ export default function HomePage() {
                   return (
                     <Link
                       key={category.id}
-                      href={`/products?search=${encodeURIComponent(category.libelle)}`}
+                      href={`/products?category=${category.id}&categoryLabel=${encodeURIComponent(category.libelle)}`}
                       className="h-full"
                     >
                       <div
@@ -490,7 +599,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        {(hasShop || user?.role === "Client") ? (
+        {(hasShop || (shopStatusResolved && user?.role === "Client")) ? (
           <section className="py-20">
             <div className="container mx-auto px-4 md:px-6">
               <div className="flex flex-col items-center justify-between gap-10 rounded-3xl border border-secondary/20 bg-secondary/10 p-8 md:flex-row md:p-16">
@@ -538,7 +647,9 @@ export default function HomePage() {
         <div className="container mx-auto px-4 md:px-6">
           <div className="grid gap-10 border-b border-white/10 pb-12 md:grid-cols-4">
             <div className="space-y-4">
-              <AppLogo className="max-h-14 w-auto" />
+              <div className="inline-flex rounded-2xl bg-white p-3 shadow-lg shadow-black/10">
+                <AppLogo className="h-16 w-auto" />
+              </div>
               <p className="text-sm leading-relaxed text-primary-foreground/55">
                 La centrale d achat intelligente du Cameroun.
               </p>
@@ -557,7 +668,7 @@ export default function HomePage() {
               <ul className="space-y-3 text-sm text-primary-foreground/55">
                 {hasShop ? (
                   <li><Link href="/dashboard" className="transition-colors hover:text-secondary">Ma boutique</Link></li>
-                ) : user?.role === "Client" ? (
+                ) : shopStatusResolved && user?.role === "Client" ? (
                   <li><Link href="/shop-registration" className="transition-colors hover:text-secondary">Ouvrir une boutique</Link></li>
                 ) : null}
                 <li><span>Guide du vendeur</span></li>

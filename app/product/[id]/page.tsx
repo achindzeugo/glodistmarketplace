@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { use, useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
@@ -21,11 +21,13 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { apiClient, Product } from "@/lib/api"
+import { getCachedUserShopState } from "@/lib/client-shop-cache"
 import { AuthManager } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
 import { addCartItem } from "@/lib/cart"
 
-export default function ProductPage({ params }: { params: { id: string } }) {
+export default function ProductPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedImage, setSelectedImage] = useState(0)
@@ -33,11 +35,12 @@ export default function ProductPage({ params }: { params: { id: string } }) {
   const [shopResolved, setShopResolved] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
+  const isOwnProduct = !!(shopResolved && ownerShopId && product?.boutique && ownerShopId === product.boutique)
 
   useEffect(() => {
     const fetchProduct = async () => {
       try {
-        const data = await apiClient.getProduct(params.id)
+        const data = await apiClient.getProduct(id)
         setProduct(data)
       } catch {
         toast({
@@ -51,7 +54,7 @@ export default function ProductPage({ params }: { params: { id: string } }) {
     }
 
     void fetchProduct()
-  }, [params.id, toast])
+  }, [id, toast])
 
   const resolveOwnerShopId = async () => {
     if (!AuthManager.isAuthenticated()) {
@@ -65,8 +68,9 @@ export default function ProductPage({ params }: { params: { id: string } }) {
     }
 
     try {
-      const userShopData = await apiClient.getUserShop()
-      const nextShopId = userShopData.shop?.id ? String(userShopData.shop.id) : null
+      const userData = AuthManager.getUser()
+      const shopState = await getCachedUserShopState(userData)
+      const nextShopId = shopState.shopId
       setOwnerShopId(nextShopId)
       setShopResolved(true)
       return nextShopId
@@ -93,7 +97,7 @@ export default function ProductPage({ params }: { params: { id: string } }) {
         description: "Connectez-vous pour ajouter au panier.",
         variant: "destructive",
       })
-      router.push(`/login?returnUrl=/product/${params.id}`)
+      router.push(`/login?returnUrl=/product/${id}`)
       return false
     }
 
@@ -112,7 +116,7 @@ export default function ProductPage({ params }: { params: { id: string } }) {
       return false
     }
 
-    addCartItem({
+    await addCartItem({
       id: String(product.id),
       name: product.nom,
       price: product.prix,
@@ -259,20 +263,20 @@ export default function ProductPage({ params }: { params: { id: string } }) {
                 <Button
                   size="lg"
                   className="flex-1 font-bold"
-                  disabled={product.stock === 0}
+                  disabled={product.stock === 0 || isOwnProduct}
                   onClick={handleBuyNow}
                 >
-                  Acheter maintenant
+                  {isOwnProduct ? "Votre produit" : "Acheter maintenant"}
                 </Button>
                 <Button
                   size="lg"
                   variant="outline"
                   className="flex-1 border-primary/30 bg-transparent text-primary hover:bg-primary/5"
-                  disabled={product.stock === 0}
+                  disabled={product.stock === 0 || isOwnProduct}
                   onClick={handleAddToCart}
                 >
                   <ShoppingCart className="mr-2 h-4 w-4" />
-                  Panier
+                  {isOwnProduct ? "Non commandable" : "Panier"}
                 </Button>
               </div>
 

@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { AuthManager } from "@/lib/auth"
-import { apiClient, User } from "@/lib/api"
+import { User } from "@/lib/api"
+import { getCachedUserShopState } from "@/lib/client-shop-cache"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { LogOut, User as UserIcon, Settings, ShoppingBag, Store } from "lucide-react"
@@ -21,6 +22,7 @@ export function UserProfileBanner() {
   const [user, setUser] = useState<User | null>(null)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [hasShop, setHasShop] = useState(false)
+  const [shopStatusResolved, setShopStatusResolved] = useState(false)
   const [showWelcome, setShowWelcome] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
@@ -34,23 +36,25 @@ export function UserProfileBanner() {
 
       if (!authenticated || !userData) {
         setHasShop(false)
+        setShopStatusResolved(true)
         return
       }
 
       try {
-        const userShopData = await apiClient.getUserShop()
-        setHasShop(!!userShopData.shop?.id)
+        const shopState = await getCachedUserShopState(userData)
+        setHasShop(shopState.hasShop)
+        setShopStatusResolved(true)
+        if (shopState.upgradedUser && shopState.hasShop) {
+          setUser(shopState.upgradedUser)
+          AuthManager.setUser(shopState.upgradedUser)
+        }
       } catch {
         setHasShop(false)
+        setShopStatusResolved(true)
       }
     }
 
     void checkAuth()
-    const interval = setInterval(() => {
-      void checkAuth()
-    }, 3000)
-
-    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -174,7 +178,7 @@ export function UserProfileBanner() {
                 <ShoppingBag className="h-4 w-4" />
                 Ma Boutique
               </Button>
-            ) : user.role === "Client" ? (
+            ) : shopStatusResolved && user.role === "Client" ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -210,7 +214,7 @@ export function UserProfileBanner() {
                     <ShoppingBag className="mr-2 h-4 w-4" />
                     Ma Boutique
                   </DropdownMenuItem>
-                ) : user.role === "Client" ? (
+                ) : shopStatusResolved && user.role === "Client" ? (
                   <DropdownMenuItem onClick={() => router.push("/shop-registration")}>
                     <Store className="mr-2 h-4 w-4" />
                     Devenir vendeur
